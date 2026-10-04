@@ -25,10 +25,9 @@ st.set_page_config(
 )
 
 # ── Imports ──────────────────────────────────────────────────────────────────
-_WIDGET_PATH = os.path.expanduser("~/taiwan_stock_widget")
-if _WIDGET_PATH not in sys.path:
-    sys.path.insert(0, _WIDGET_PATH)
-sys.path.insert(0, os.path.dirname(__file__))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 try:
     from scanner import (

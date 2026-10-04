@@ -14,9 +14,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # ── Reuse indicators from the existing app ──────────────────────────────────
-_WIDGET_PATH = os.path.expanduser("~/taiwan_stock_widget")
-if _WIDGET_PATH not in sys.path:
-    sys.path.insert(0, _WIDGET_PATH)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 from widget import (
     calc_rsi, calc_macd, calc_atr, calc_bollinger, calc_stochastic,
