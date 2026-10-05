@@ -91,7 +91,7 @@ with st.sidebar:
     st.markdown("## 📊 波段 / 當沖")
     st.caption(f"NT$500,000 資本　目標 NT$50,000/月")
     st.divider()
-    view = st.radio("", ["🏠 今日儀表板", "📈 波段掃描", "⚡ 當沖機會",
+    view = st.radio("", ["🏠 今日儀表板", "📡 即時行情", "📈 波段掃描", "⚡ 當沖機會",
                           "💼 部位管理", "📋 歷史績效", "🧮 部位計算機"], label_visibility="collapsed")
     st.divider()
     _rcheck = daily_risk_check(CAPITAL)
@@ -144,6 +144,80 @@ if _loaded_count < _total_count * 0.5:
     st.error(f"⚠️ 資料載入異常：只有 {_loaded_count}/{_total_count} 檔有效。可能是 Yahoo Finance 限流，請稍後重新整理。")
 elif _loaded_count < _total_count * 0.8:
     st.warning(f"⚠️ 部分資料缺失（{_loaded_count}/{_total_count} 檔）：掃描結果可能不完整。")
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Live Price Fetcher (TWSE public API, no auth required)
+# ─────────────────────────────────────────────────────────────────────────────
+def fetch_live_prices(tickers: list, daily_prices: dict = None) -> dict:
+    """
+    Near-real-time prices via yfinance 5-min intraday bars.
+    daily_prices: the 6mo daily cache — used to compute change vs. yesterday's close.
+    Returns {ticker: {price, change, change_pct, open, high, low, volume, time, name}}
+    """
+    import yfinance as yf
+    results = {}
+    daily_prices = daily_prices or {}
+
+    chunk_size = 20
+    for i in range(0, len(tickers), chunk_size):
+        chunk = tickers[i:i+chunk_size]
+        try:
+            raw = yf.download(
+                chunk, period="1d", interval="5m",
+                progress=False, auto_adjust=True,
+                group_by="ticker", threads=True,
+            )
+            for ticker in chunk:
+                try:
+                    df_t = raw[ticker] if len(chunk) > 1 else raw
+                    if df_t is None or len(df_t) == 0:
+                        continue
+                    price      = float(df_t["Close"].iloc[-1])
+                    open_price = float(df_t["Open"].iloc[0])
+                    high_day   = float(df_t["High"].max())
+                    low_day    = float(df_t["Low"].min())
+                    vol_day    = int(df_t["Volume"].sum())
+                    bar_time   = df_t.index[-1]
+                    bar_time_s = bar_time.tz_convert(TST).strftime("%H:%M") if hasattr(bar_time, "tz_convert") else str(bar_time)[-8:-3]
+
+                    # Prev close from daily cache (index -2 = yesterday)
+                    d_df = daily_prices.get(ticker)
+                    if d_df is not None and len(d_df) >= 2:
+                        prev_close = float(d_df["Close"].iloc[-2])
+                    else:
+                        prev_close = open_price
+
+                    change     = round(price - prev_close, 2)
+                    change_pct = round(change / prev_close * 100, 2) if prev_close > 0 else 0
+
+                    results[ticker] = {
+                        "price":      price,
+                        "prev_close": prev_close,
+                        "change":     change,
+                        "change_pct": change_pct,
+                        "open":       open_price,
+                        "high":       high_day,
+                        "low":        low_day,
+                        "volume":     vol_day,
+                        "time":       bar_time_s,
+                        "name":       TECH_UNIVERSE.get(ticker, {}).get("name", ticker.replace(".TW", "")),
+                    }
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    return results
+
+
+def _is_market_open() -> bool:
+    n = datetime.now(tz=TST)
+    if n.weekday() >= 5:
+        return False
+    open_t  = n.replace(hour=9,  minute=0,  second=0, microsecond=0)
+    close_t = n.replace(hour=13, minute=30, second=0, microsecond=0)
+    return open_t <= n <= close_t
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  VIEW: 今日儀表板
@@ -258,6 +332,107 @@ if "儀表板" in view:
         ' 當沖需開通「當沖帳戶」，稅率 0.3%（一般 0.15%）。'
         ' 本 App 為訊號工具，不保證獲利，請自行判斷風險。'
         '</div>', unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  VIEW: 即時行情
+# ─────────────────────────────────────────────────────────────────────────────
+elif "即時行情" in view:
+    st.markdown("## 📡 即時行情")
+    st.caption("資料來源：台灣證券交易所 TWSE 公開資訊　交易時間：週一至週五 09:00–13:30")
+
+    open_positions = {t["ticker"] for t in get_open_trades()}
+    all_tickers    = list(TECH_UNIVERSE.keys())
+
+    @st.fragment(run_every=30)
+    def _live_board():
+        now_tst = datetime.now(tz=TST)
+        market_open = _is_market_open()
+
+        if not market_open:
+            st.info(f"市場已收盤（現在 {now_tst.strftime('%H:%M')} TST）。顯示上一個收盤價。")
+
+        with st.spinner("取得即時報價…"):
+            live = fetch_live_prices(all_tickers, daily_prices=prices)
+
+        n_live = len(live)
+        if n_live == 0:
+            if market_open:
+                st.error("⚠️ 無法取得報價 — TWSE API 未回應，請稍後重新整理。")
+            else:
+                st.info("收盤後 TWSE API 不提供報價。請在交易時段回來查看。")
+            return
+
+        st.caption(
+            f"{'🟢 市場開盤中' if market_open else '🔴 已收盤'}　"
+            f"報價時間：{now_tst.strftime('%H:%M:%S')}　"
+            f"已取得 {n_live}/{len(all_tickers)} 檔"
+        )
+
+        # Build rows — open positions float to top
+        rows = []
+        for ticker in all_tickers:
+            d = live.get(ticker)
+            if d is None:
+                continue
+            rows.append({
+                "_pos":        0 if ticker in open_positions else 1,
+                "_chg":        d["change_pct"],
+                "持倉":        "💼" if ticker in open_positions else "",
+                "代號":        ticker.replace(".TW", ""),
+                "名稱":        TECH_UNIVERSE.get(ticker, {}).get("name", d["name"]),
+                "現價":        d["price"],
+                "漲跌":        d["change"],
+                "漲跌%":       d["change_pct"],
+                "開盤":        d["open"],
+                "最高":        d["high"],
+                "最低":        d["low"],
+                "成交量(千股)": d["volume"],
+                "時間":        d["time"],
+            })
+
+        rows.sort(key=lambda r: (r.pop("_pos"), -r.pop("_chg")))
+        df_live = pd.DataFrame(rows)
+
+        def _color_chg(val):
+            if isinstance(val, float):
+                if val > 0:  return "color:#ef5350;font-weight:bold"   # 漲 = 紅
+                if val < 0:  return "color:#00c853;font-weight:bold"   # 跌 = 綠
+            return "color:#aaa"
+
+        st.dataframe(
+            df_live.style.map(_color_chg, subset=["漲跌", "漲跌%"]),
+            use_container_width=True, hide_index=True, height=620,
+        )
+
+        # ── Open position live P&L strip ──────────────────────────────────
+        op = get_open_trades()
+        if op:
+            st.divider()
+            st.markdown("#### 💼 持倉即時盈虧")
+            cols = st.columns(min(len(op), 4))
+            for i, t in enumerate(op):
+                d = live.get(t["ticker"])
+                cur_price = d["price"] if d else t["entry"]
+                unreal    = round((cur_price - t["entry"]) * t["shares"])
+                unreal_pct = round((cur_price - t["entry"]) / t["entry"] * 100, 2)
+                u_col = "#ef5350" if unreal >= 0 else "#00c853"
+                dist_stop = round((cur_price - t["stop"]) / cur_price * 100, 1)
+                with cols[i % 4]:
+                    st.markdown(
+                        f'<div class="metric-card">'
+                        f'<div class="metric-title">{t["ticker"].replace(".TW","")} {t["name"]}</div>'
+                        f'<div class="metric-val" style="color:{u_col}">'
+                        f'NT${cur_price:.1f}</div>'
+                        f'<div style="font-size:12px;color:{u_col};margin-top:4px">'
+                        f'{unreal_pct:+.2f}%　NT${unreal:+,}</div>'
+                        f'<div style="font-size:11px;color:#666;margin-top:4px">'
+                        f'進場 NT${t["entry"]:.1f}　止損距 {dist_stop:.1f}%</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+    _live_board()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
