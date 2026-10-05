@@ -118,7 +118,7 @@ with st.sidebar:
 @st.cache_data(ttl=900, show_spinner=False)
 def load_prices(epoch: str):
     tickers = list(TECH_UNIVERSE.keys())
-    return fetch_prices_batch(tickers, period="3mo")
+    return fetch_prices_batch(tickers, period="6mo")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_taiex(epoch: str):
@@ -136,6 +136,14 @@ with st.spinner("載入市場資料…"):
     prices  = load_prices(ep)
     taiex   = load_taiex(ep)
     mkt_dir = calc_market_direction(taiex)
+
+# Data quality check — show banner if most tickers failed to load
+_loaded_count = sum(1 for df in prices.values() if df is not None and len(df) >= 30)
+_total_count  = len(prices)
+if _loaded_count < _total_count * 0.5:
+    st.error(f"⚠️ 資料載入異常：只有 {_loaded_count}/{_total_count} 檔有效。可能是 Yahoo Finance 限流，請稍後重新整理。")
+elif _loaded_count < _total_count * 0.8:
+    st.warning(f"⚠️ 部分資料缺失（{_loaded_count}/{_total_count} 檔）：掃描結果可能不完整。")
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  VIEW: 今日儀表板
