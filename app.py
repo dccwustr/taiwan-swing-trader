@@ -371,112 +371,79 @@ elif "波段掃描" in view:
         )
         filtered = [s for s in swings if s["type"] in setup_filter]
 
-        # ── 即時報價條 (auto-refresh every 2s, data cached 30s) ───────────────
-        _setup_tickers  = [s["ticker"] for s in filtered[:8]]
-        _entry_map      = {s["ticker"]: s["last"]  for s in filtered[:8]}
-        _name_map       = {s["ticker"]: s["name"]  for s in filtered[:8]}
-        _color_map      = {s["ticker"]: SWING_SETUP_TYPES.get(s["type"], ("", "#7eb3ff"))[1]
-                           for s in filtered[:8]}
-
         @st.fragment(run_every=1)
-        def _scan_live():
+        def _card_live_block(
+            ticker, name, sector, last, stop, target, rr,
+            shares, notional, risk_nwd, reasons, sr,
+            setup_label, setup_color, rr_cls
+        ):
             now = datetime.now(tz=TST)
-            ck  = ",".join(sorted(_setup_tickers)) + "_" + now.strftime("%Y%m%d%H%M") + str(now.second // 30)
-            live = _cached_live_prices(ck, _setup_tickers, prices)
+            ck  = f"{ticker}_{now.strftime('%Y%m%d%H%M')}{now.second // 30}"
+            live_data = _cached_live_prices(ck, [ticker], prices)
+            d = live_data.get(ticker, {})
+            if not d:
+                df = prices.get(ticker)
+                if df is not None and len(df) >= 2:
+                    p  = float(df["Close"].iloc[-1])
+                    pc = float(df["Close"].iloc[-2])
+                    d  = {"price": p, "change": round(p-pc,2),
+                          "change_pct": round((p-pc)/pc*100,2) if pc else 0, "time": "收盤"}
 
-            # Outside hours: fall back to last daily close
-            if not live:
-                for t in _setup_tickers:
-                    df = prices.get(t)
-                    if df is not None and len(df) >= 2:
-                        p  = float(df["Close"].iloc[-1])
-                        pc = float(df["Close"].iloc[-2])
-                        live[t] = {"price": p, "change": round(p-pc,2),
-                                   "change_pct": round((p-pc)/pc*100,2) if pc else 0,
-                                   "time": "收盤"}
+            live_price = d.get("price", 0) or last
+            chg        = d.get("change", 0)
+            chg_pct    = d.get("change_pct", 0)
+            bar_time   = d.get("time", "—")
+            freshness  = "🟢" if _is_market_open() else "🔴"
+            p_col      = "#ef5350" if chg >= 0 else "#00c853"
 
-            freshness = "🟢 即時" if _is_market_open() else "🔴 收盤價"
-            st.markdown(
-                f'<div style="font-size:11px;color:#556;margin-bottom:6px">'
-                f'📡 {freshness}　{now.strftime("%H:%M:%S")} TST</div>',
-                unsafe_allow_html=True)
+            dist = round((live_price - last) / last * 100, 2) if last > 0 else 0
+            if abs(dist) <= 0.5:
+                entry_badge = '<span style="background:#ffd54f22;color:#ffd54f;padding:1px 6px;border-radius:3px;font-size:10px">● 進場區</span>'
+            elif dist > 0.5:
+                entry_badge = f'<span style="color:#888;font-size:10px">距進場 +{dist:.1f}%</span>'
+            else:
+                entry_badge = f'<span style="color:#69f0ae;font-size:10px">低於建議 {dist:.1f}%</span>'
 
-            rows_of_4 = [_setup_tickers[i:i+4] for i in range(0, len(_setup_tickers), 4)]
-            for row in rows_of_4:
-                cols = st.columns(len(row))
-                for i, ticker in enumerate(row):
-                    d = live.get(ticker, {})
-                    price    = d.get("price", 0)
-                    chg      = d.get("change", 0)
-                    chg_pct  = d.get("change_pct", 0)
-                    bar_time = d.get("time", "—")
-                    entry    = _entry_map.get(ticker, price)
-                    dist     = round((price - entry) / entry * 100, 2) if entry > 0 and price > 0 else 0
-
-                    p_col = "#ef5350" if chg >= 0 else "#00c853"
-                    c_col = _color_map.get(ticker, "#7eb3ff")
-
-                    if price == 0:
-                        entry_badge = '<span style="color:#444">—</span>'
-                    elif abs(dist) <= 0.5:
-                        entry_badge = '<span style="background:#ffd54f22;color:#ffd54f;padding:1px 6px;border-radius:3px;font-size:10px">● 進場區</span>'
-                    elif dist > 0.5:
-                        entry_badge = f'<span style="color:#888;font-size:10px">距進場 +{dist:.1f}%</span>'
-                    else:
-                        entry_badge = f'<span style="color:#69f0ae;font-size:10px">低於建議 {dist:.1f}%</span>'
-
-                    with cols[i]:
-                        st.markdown(
-                            f'<div style="background:#080f1e;border:1px solid {c_col}55;'
-                            f'border-radius:8px;padding:10px 14px;margin-bottom:6px">'
-                            f'<div style="font-size:11px;color:#666;margin-bottom:2px">'
-                            f'{ticker.replace(".TW","")} {_name_map.get(ticker,"")}</div>'
-                            f'<div style="font-size:26px;font-weight:800;color:{p_col};line-height:1.1">'
-                            f'NT${price:.1f}</div>'
-                            f'<div style="font-size:12px;color:{p_col};margin-top:2px">'
-                            f'{chg:+.2f} ({chg_pct:+.2f}%)</div>'
-                            f'<div style="margin-top:5px">{entry_badge}</div>'
-                            f'<div style="font-size:10px;color:#333;margin-top:3px">{bar_time}</div>'
-                            f'</div>',
-                            unsafe_allow_html=True)
-
-        _scan_live()
-        st.divider()
-
-        for s in filtered[:8]:
-            setup_label, setup_color = SWING_SETUP_TYPES.get(s["type"], ("設置", "#aaa"))
-            rr_cls = "rr-good" if s["rr"] >= 2.0 else ("rr-ok" if s["rr"] >= 1.5 else "rr-bad")
-            sr     = s.get("sr", {})
+            stop_dist   = round((stop   - live_price) / live_price * 100, 1) if live_price > 0 else round((stop   - last) / last * 100, 1)
+            target_dist = round((target - live_price) / live_price * 100, 1) if live_price > 0 else round((target - last) / last * 100, 1)
 
             st.markdown(
                 f'<div class="setup-card" style="border-left:4px solid {setup_color}">'
                 # Header
                 f'<div style="display:flex;justify-content:space-between;align-items:center">'
-                f'<span style="font-size:17px;font-weight:800">'
-                f'{s["ticker"].replace(".TW","")} {s["name"]}</span>'
+                f'<span style="font-size:17px;font-weight:800">{ticker.replace(".TW","")} {name}</span>'
                 f'<span class="badge" style="background:{setup_color}22;color:{setup_color};border:1px solid {setup_color}">{setup_label}</span>'
                 f'</div>'
-                f'<div style="font-size:11px;color:#888;margin-bottom:8px">{s["sector"]}</div>'
-                # Price row
+                f'<div style="font-size:11px;color:#888;margin-bottom:8px">{sector}</div>'
+                # Live price block
+                f'<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;'
+                f'background:#0a1020;border-radius:6px;padding:8px 12px;margin-bottom:10px">'
+                f'<div>'
+                f'<span style="font-size:28px;font-weight:900;color:{p_col};line-height:1">NT${live_price:.1f}</span>'
+                f'<span style="font-size:12px;color:{p_col};margin-left:8px">{chg:+.2f} ({chg_pct:+.2f}%)</span>'
+                f'</div>'
+                f'<div style="font-size:10px;color:#445">{freshness} {now.strftime("%H:%M:%S")}　{bar_time}</div>'
+                f'<div>{entry_badge}</div>'
+                f'</div>'
+                # Targets row
                 f'<div style="display:flex;gap:20px;flex-wrap:wrap;font-size:13px;margin-bottom:8px">'
-                f'<span>現價 <b style="color:#f0f0f0">NT${s["last"]:.1f}</b></span>'
-                f'<span>進場 <span class="signal-buy">NT${s["last"]:.1f}</span></span>'
-                f'<span>止損 <span class="signal-sell">NT${s["stop"]:.1f}</span>'
-                f'  <span style="color:#888;font-size:11px">({round((s["stop"]-s["last"])/s["last"]*100,1)}%)</span></span>'
-                f'<span>目標 <span style="color:#69f0ae">NT${s["target"]:.1f}</span>'
-                f'  <span style="color:#888;font-size:11px">(+{round((s["target"]-s["last"])/s["last"]*100,1)}%)</span></span>'
-                f'<span class="{rr_cls}">R:R 1:{s["rr"]}</span>'
+                f'<span>進場 <span class="signal-buy">NT${last:.1f}</span></span>'
+                f'<span>止損 <span class="signal-sell">NT${stop:.1f}</span>'
+                f'  <span style="color:#888;font-size:11px">({stop_dist:+.1f}%)</span></span>'
+                f'<span>目標 <span style="color:#69f0ae">NT${target:.1f}</span>'
+                f'  <span style="color:#888;font-size:11px">({target_dist:+.1f}%)</span></span>'
+                f'<span class="{rr_cls}">R:R 1:{rr}</span>'
                 f'</div>'
                 # Position sizing
                 f'<div style="background:#0a1020;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:8px">'
-                f'🧮 建議部位：<b>{s["shares"]:,} 股</b>　'
-                f'投入 NT${s["notional"]:,}　'
-                f'最大風險 <span style="color:#ef9a9a">NT${s["risk_nwd"]:,}</span>'
-                f'（資本 {s["risk_nwd"]/CAPITAL*100:.1f}%）'
+                f'🧮 建議部位：<b>{shares:,} 股</b>　'
+                f'投入 NT${notional:,}　'
+                f'最大風險 <span style="color:#ef9a9a">NT${risk_nwd:,}</span>'
+                f'（資本 {risk_nwd/CAPITAL*100:.1f}%）'
                 f'</div>'
                 # Reasons
                 f'<div style="font-size:12px;color:#aaa;margin-bottom:6px">'
-                + "　".join(f'<span style="color:#7eb3ff">▸</span> {r}' for r in s.get("reasons", []))
+                + "　".join(f'<span style="color:#7eb3ff">▸</span> {r}' for r in reasons)
                 + f'</div>'
                 # S/R
                 f'<div style="font-size:11px;color:#555">'
@@ -487,7 +454,17 @@ elif "波段掃描" in view:
                 f'</div>',
                 unsafe_allow_html=True
             )
-            # Quick open trade button
+
+        for s in filtered[:8]:
+            setup_label, setup_color = SWING_SETUP_TYPES.get(s["type"], ("設置", "#aaa"))
+            rr_cls = "rr-good" if s["rr"] >= 2.0 else ("rr-ok" if s["rr"] >= 1.5 else "rr-bad")
+            sr     = s.get("sr", {})
+
+            _card_live_block(
+                s["ticker"], s["name"], s["sector"], s["last"], s["stop"], s["target"],
+                s["rr"], s["shares"], s["notional"], s["risk_nwd"],
+                s.get("reasons", []), sr, setup_label, setup_color, rr_cls
+            )
             with st.expander(f"📝 開倉 {s['ticker'].replace('.TW','')}（點擊展開）", expanded=False):
                 _e = st.number_input("實際進場價", value=s["last"], step=0.1, key=f"e_{s['ticker']}")
                 _s = st.number_input("止損價", value=s["stop"], step=0.1, key=f"s_{s['ticker']}")
