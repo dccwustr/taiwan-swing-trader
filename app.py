@@ -219,6 +219,12 @@ def _is_market_open() -> bool:
     return open_t <= n <= close_t
 
 
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_live_prices(tickers_key: str, _tickers: list, _daily: dict) -> dict:
+    """30-second cached wrapper around fetch_live_prices."""
+    return fetch_live_prices(_tickers, daily_prices=_daily)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  VIEW: 今日儀表板
 # ─────────────────────────────────────────────────────────────────────────────
@@ -465,6 +471,78 @@ elif "波段掃描" in view:
             format_func=lambda k: SWING_SETUP_TYPES[k][0],
         )
         filtered = [s for s in swings if s["type"] in setup_filter]
+
+        # ── 即時報價條 (auto-refresh every 2s, data cached 30s) ───────────────
+        _setup_tickers  = [s["ticker"] for s in filtered[:8]]
+        _entry_map      = {s["ticker"]: s["last"]  for s in filtered[:8]}
+        _name_map       = {s["ticker"]: s["name"]  for s in filtered[:8]}
+        _color_map      = {s["ticker"]: SWING_SETUP_TYPES.get(s["type"], ("", "#7eb3ff"))[1]
+                           for s in filtered[:8]}
+
+        @st.fragment(run_every=2)
+        def _scan_live():
+            now = datetime.now(tz=TST)
+            ck  = ",".join(sorted(_setup_tickers)) + "_" + now.strftime("%Y%m%d%H%M") + str(now.second // 30)
+            live = _cached_live_prices(ck, _setup_tickers, prices)
+
+            # Outside hours: fall back to last daily close
+            if not live:
+                for t in _setup_tickers:
+                    df = prices.get(t)
+                    if df is not None and len(df) >= 2:
+                        p  = float(df["Close"].iloc[-1])
+                        pc = float(df["Close"].iloc[-2])
+                        live[t] = {"price": p, "change": round(p-pc,2),
+                                   "change_pct": round((p-pc)/pc*100,2) if pc else 0,
+                                   "time": "收盤"}
+
+            freshness = "🟢 即時" if _is_market_open() else "🔴 收盤價"
+            st.markdown(
+                f'<div style="font-size:11px;color:#556;margin-bottom:6px">'
+                f'📡 {freshness}　{now.strftime("%H:%M:%S")} TST</div>',
+                unsafe_allow_html=True)
+
+            rows_of_4 = [_setup_tickers[i:i+4] for i in range(0, len(_setup_tickers), 4)]
+            for row in rows_of_4:
+                cols = st.columns(len(row))
+                for i, ticker in enumerate(row):
+                    d = live.get(ticker, {})
+                    price    = d.get("price", 0)
+                    chg      = d.get("change", 0)
+                    chg_pct  = d.get("change_pct", 0)
+                    bar_time = d.get("time", "—")
+                    entry    = _entry_map.get(ticker, price)
+                    dist     = round((price - entry) / entry * 100, 2) if entry > 0 and price > 0 else 0
+
+                    p_col = "#ef5350" if chg >= 0 else "#00c853"
+                    c_col = _color_map.get(ticker, "#7eb3ff")
+
+                    if price == 0:
+                        entry_badge = '<span style="color:#444">—</span>'
+                    elif abs(dist) <= 0.5:
+                        entry_badge = '<span style="background:#ffd54f22;color:#ffd54f;padding:1px 6px;border-radius:3px;font-size:10px">● 進場區</span>'
+                    elif dist > 0.5:
+                        entry_badge = f'<span style="color:#888;font-size:10px">距進場 +{dist:.1f}%</span>'
+                    else:
+                        entry_badge = f'<span style="color:#69f0ae;font-size:10px">低於建議 {dist:.1f}%</span>'
+
+                    with cols[i]:
+                        st.markdown(
+                            f'<div style="background:#080f1e;border:1px solid {c_col}55;'
+                            f'border-radius:8px;padding:10px 14px;margin-bottom:6px">'
+                            f'<div style="font-size:11px;color:#666;margin-bottom:2px">'
+                            f'{ticker.replace(".TW","")} {_name_map.get(ticker,"")}</div>'
+                            f'<div style="font-size:26px;font-weight:800;color:{p_col};line-height:1.1">'
+                            f'NT${price:.1f}</div>'
+                            f'<div style="font-size:12px;color:{p_col};margin-top:2px">'
+                            f'{chg:+.2f} ({chg_pct:+.2f}%)</div>'
+                            f'<div style="margin-top:5px">{entry_badge}</div>'
+                            f'<div style="font-size:10px;color:#333;margin-top:3px">{bar_time}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True)
+
+        _scan_live()
+        st.divider()
 
         for s in filtered[:8]:
             setup_label, setup_color = SWING_SETUP_TYPES.get(s["type"], ("設置", "#aaa"))
