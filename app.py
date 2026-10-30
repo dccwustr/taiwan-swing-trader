@@ -7,6 +7,7 @@ Signal-based: App 給訊號，手動下單
 """
 import sys, os, json, warnings
 from datetime import datetime, timezone, timedelta
+import requests
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -45,6 +46,7 @@ try:
         fetch_prices_batch, fetch_taiex_prices, calc_market_direction,
         TECH_UNIVERSE,
     )
+    from dip_watch import market_drop
 except Exception as _e:
     st.error(f"載入失敗：{_e}")
     import traceback; st.code(traceback.format_exc())
@@ -124,6 +126,17 @@ def load_prices(epoch: str):
 def load_taiex(epoch: str):
     return fetch_taiex_prices()
 
+LENS_URL = "https://raw.githubusercontent.com/dccwustr/Taiwan-Stock-app/main/data/master_lenses.json"
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def load_lenses() -> dict:
+    """大師鏡頭（台股 App 每週產出的 JSON），讀 GitHub raw，不另外打 Yahoo"""
+    try:
+        r = requests.get(LENS_URL, timeout=8)
+        return r.json().get("tickers", {}) if r.ok else {}
+    except Exception:
+        return {}
+
 def _epoch() -> str:
     n = datetime.now(tz=TST)
     base = n.strftime("%Y-%m-%d")
@@ -136,6 +149,8 @@ with st.spinner("載入市場資料…"):
     prices  = load_prices(ep)
     taiex   = load_taiex(ep)
     mkt_dir = calc_market_direction(taiex)
+    mkt_drop = market_drop(taiex)
+    lenses  = load_lenses()
 
 # Data quality check — show banner if most tickers failed to load
 _loaded_count = sum(1 for df in prices.values() if df is not None and len(df) >= 30)
@@ -352,7 +367,23 @@ elif "波段掃描" in view:
     if mkt_status == "bear":
         st.error(f"⛔ 大盤空頭（{mkt_dir.get('label','')}）——波段做多勝率大幅降低，建議暫停或只做半倉")
     elif mkt_status == "neutral":
-        st.warning(f"⚠️ 大盤整理中（{mkt_dir.get('label','')}）——部位控制在 2 個以內")
+        st.warning(f"{mkt_dir.get('label') or '大盤整理中 ⚠️'}——部位控制在 2 個以內")
+    if mkt_drop["alert"]:
+        st.warning(f"📉 大盤急跌日：加權 {mkt_drop['chg1d']:+.2f}%，距 20 日高點 {mkt_drop['drawdown']:+.2f}%。"
+                   "大盤修正時突破較容易失敗，新倉建議半倉（卡片上附半倉股數）。")
+
+    def _extra_lines(s: dict) -> list:
+        """卡片附加說明：急跌日半倉股數 + 大師鏡頭（只顯示，不改設置分數）"""
+        out = []
+        if mkt_drop["alert"]:
+            out.append(f"⚠️ 急跌日建議半倉 → 約 {s['shares'] // 2:,} 股")
+        L = lenses.get(s["ticker"], {})
+        b, f = L.get("buffett", {}).get("score"), L.get("piotroski", {}).get("score")
+        if not L.get("na") and b is not None and f is not None:
+            cat = L.get("lynch", {}).get("category") or "—"
+            out.append(f"大師鏡頭：🎩 巴菲特 {b}/8　📋 F-Score {f}/9　🔎 {cat}"
+                       + ("　⚠️ 財報轉弱" if f <= 3 else ""))
+        return out
 
     with st.spinner("掃描波段設置中…"):
         swings = scan_swing_setups(prices, capital=CAPITAL)
@@ -463,7 +494,7 @@ elif "波段掃描" in view:
             _card_live_block(
                 s["ticker"], s["name"], s["sector"], s["last"], s["stop"], s["target"],
                 s["rr"], s["shares"], s["notional"], s["risk_nwd"],
-                s.get("reasons", []), sr, setup_label, setup_color, rr_cls
+                s.get("reasons", []) + _extra_lines(s), sr, setup_label, setup_color, rr_cls
             )
             with st.expander(f"📝 開倉 {s['ticker'].replace('.TW','')}（點擊展開）", expanded=False):
                 _e = st.number_input("實際進場價", value=s["last"], step=0.1, key=f"e_{s['ticker']}")

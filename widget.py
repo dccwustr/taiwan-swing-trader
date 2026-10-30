@@ -488,7 +488,9 @@ def calc_market_direction(taiex_close: Optional[pd.Series]) -> Dict:
     last  = float(close.iloc[-1])
     ma20  = float(close.rolling(20).mean().iloc[-1])
     ma50  = float(close.rolling(min(50, len(close))).mean().iloc[-1])
-    ma200 = float(close.rolling(min(200, len(close))).mean().iloc[-1])
+    # MA200 needs a real 200 bars; a shorter window would just duplicate MA50
+    has_ma200 = len(close) >= 200
+    ma200 = float(close.rolling(200).mean().iloc[-1]) if has_ma200 else ma50
 
     # Distribution days: high-volume down-days signal institutional selling
     dist_days = 0
@@ -496,7 +498,13 @@ def calc_market_direction(taiex_close: Optional[pd.Series]) -> Dict:
         pct_chg   = close.pct_change()
         dist_days = int((pct_chg.iloc[-25:] < -0.015).sum())
 
-    if last > ma50 and last > ma200 and ma50 > ma200:
+    if not has_ma200:
+        # Not enough history for the 200-day test: never call a bear market
+        if last < ma50:
+            status, penalty, label = "neutral", -8, "大盤修正中 ⚠️"
+        else:
+            status, penalty, label = "neutral", -5, "大盤整理中"
+    elif last > ma50 and last > ma200 and ma50 > ma200:
         if dist_days >= 5:
             status, penalty = "neutral", -8
             label = f"大盤多頭但出貨壓力({dist_days}日) ⚠️"
@@ -514,8 +522,8 @@ def calc_market_direction(taiex_close: Optional[pd.Series]) -> Dict:
         label = "大盤整理中"
 
     return {"status": status, "penalty": penalty, "label": label,
-            "dist_days": dist_days,
-            "ma50": round(ma50, 0), "ma200": round(ma200, 0)}
+            "dist_days": dist_days, "last": round(last, 0),
+            "ma50": round(ma50, 0), "ma200": round(ma200, 0) if has_ma200 else 0.0}
 
 
 def calc_bollinger(close: pd.Series, period: int = 20, std_mult: float = 2.0) -> dict:
@@ -2241,7 +2249,7 @@ def calc_three_investors_bonus(trust_net: float, dealer_net: float, foreign_net:
             "trust_net": trust_net, "dealer_net": dealer_net}
 
 
-def fetch_taiex_prices(period: str = "3mo") -> Optional[pd.Series]:
+def fetch_taiex_prices(period: str = "1y") -> Optional[pd.Series]:
     """
     台灣加權指數 (^TWII) 收盤歷史 — O'Neil RS 計算的市場基準。
     Returns pd.Series (date index, close values), or None on failure.
