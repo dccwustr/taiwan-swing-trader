@@ -274,3 +274,143 @@ def daily_risk_check(capital: int = CAPITAL) -> dict:
         "daily_limit_hit": today_pnl <= -DAILY_LOSS_LIMIT,
         "positions_full":  open_count >= MAX_POSITIONS,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  交易紀錄檢討 — 找出重複犯的錯、錯過的機會、行為偏誤，產出 3 條個人化規則
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _initial_risk(t: dict) -> float:
+    """開倉時每股風險。止損可能已上移，所以用 目標/R:R 反推原始風險。"""
+    rr = t.get("rr", 0) or 0
+    if rr > 0 and t.get("target", 0) > t.get("entry", 0):
+        return (t["target"] - t["entry"]) / rr
+    return max(t.get("entry", 0) - t.get("stop", 0), 0)
+
+
+def review_trades(closed: List[dict], prices: Optional[dict] = None, n: int = 20) -> dict:
+    """
+    檢視最近 n 筆已平倉交易。
+    prices: {ticker: DataFrame}（可省略）— 用來判斷提早出場後股價是否仍達目標。
+    回傳 mistakes / missed / biases（各為字串清單）與 rules（最多 3 條）。
+    """
+    recent = sorted(closed, key=lambda x: x.get("closed_at", ""))[-n:]
+    if len(recent) < 3:
+        return {"count": len(recent), "mistakes": [], "missed": [], "biases": [], "rules": []}
+
+    findings = []   # (priority, kind, text, rule)
+
+    def _r(t):
+        risk = _initial_risk(t)
+        return (t.get("exit_price", t["entry"]) - t["entry"]) / risk if risk > 0 else 0.0
+
+    wins   = [t for t in recent if t.get("pnl", 0) > 0]
+    losses = [t for t in recent if t.get("pnl", 0) <= 0]
+
+    # ① 沒守停損：出場價明顯低於停損價
+    blown = [t for t in losses if t.get("exit_price", 0) < t.get("stop", 0) * 0.99]
+    if blown:
+        worst = min(_r(t) for t in blown)
+        findings.append((1, "mistake",
+            f"{len(blown)} 筆跌破停損才出場（最差 {worst:.1f}R），虧損超出計畫",
+            "跌破停損價當天收盤前一定出場，不等反彈"))
+
+    # ② 賺小賠大：平均獲利 R 小於平均虧損 R
+    if wins and losses:
+        avg_win_r  = sum(_r(t) for t in wins) / len(wins)
+        avg_loss_r = abs(sum(_r(t) for t in losses) / len(losses))
+        if avg_win_r < avg_loss_r:
+            findings.append((2, "bias",
+                f"賺小賠大：平均獲利 {avg_win_r:.1f}R，平均虧損 {avg_loss_r:.1f}R（處分效應）",
+                "獲利單至少抱到 1.5R 或跌破追蹤止損才出場"))
+
+    # ③ 抱虧損比抱獲利久
+    def _days(t):
+        try:
+            return (datetime.fromisoformat(t["closed_at"]) - datetime.fromisoformat(t["opened_at"])).days
+        except Exception:
+            return None
+    wd = [d for d in (_days(t) for t in wins) if d is not None]
+    ld = [d for d in (_days(t) for t in losses) if d is not None]
+    if wd and ld and sum(ld) / len(ld) > 1.5 * max(sum(wd) / len(wd), 1):
+        findings.append((3, "bias",
+            f"虧損單平均抱 {sum(ld)/len(ld):.0f} 天，獲利單只抱 {sum(wd)/len(wd):.0f} 天——不願認賠",
+            "持倉超過 10 個交易日仍未達 1R，就減碼一半"))
+
+    # ④ 報復性交易：虧損平倉當天又開新倉
+    by_open = sorted(recent, key=lambda x: x.get("opened_at", ""))
+    revenge = 0
+    for lt in losses:
+        day = lt.get("closed_at", "")[:10]
+        if any(o.get("opened_at", "")[:10] == day and o.get("opened_at", "") > lt.get("closed_at", "")
+               for o in by_open):
+            revenge += 1
+    if revenge:
+        findings.append((2, "bias",
+            f"{revenge} 次虧損出場後當天又開新倉（報復性交易）",
+            "停損出場當天不開新倉，隔天盤前重新評估"))
+
+    # ⑤ 進場時 R:R 不足
+    low_rr = [t for t in recent if 0 < t.get("rr", 0) < 1.5]
+    if low_rr:
+        findings.append((4, "mistake",
+            f"{len(low_rr)} 筆進場時風險報酬比低於 1:1.5",
+            "R:R 未達 1:1.5 的設置一律不進場"))
+
+    # ⑥ 設置類型表現：找出勝率最差的設置
+    by_setup: Dict[str, List[dict]] = {}
+    for t in recent:
+        by_setup.setdefault(t.get("setup") or "未分類", []).append(t)
+    rated = [(k, sum(1 for t in v if t.get("pnl", 0) > 0) / len(v), len(v))
+             for k, v in by_setup.items() if len(v) >= 3]
+    if len(rated) >= 2:
+        worst_k, worst_wr, worst_n = min(rated, key=lambda x: x[1])
+        best_k, best_wr, _ = max(rated, key=lambda x: x[1])
+        if worst_wr < 0.4 and best_wr - worst_wr >= 0.2:
+            findings.append((3, "mistake",
+                f"「{worst_k}」設置 {worst_n} 筆勝率只有 {worst_wr*100:.0f}%，"
+                f"「{best_k}」勝率 {best_wr*100:.0f}%",
+                f"暫停「{worst_k}」設置，集中做「{best_k}」"))
+
+    # ⑦ 錯過的機會：未達目標就出場，之後股價仍漲到目標
+    missed = []
+    if prices:
+        for t in wins:
+            if t.get("exit_price", 0) >= t.get("target", 0):
+                continue
+            df = prices.get(t["ticker"])
+            if df is None or not len(df):
+                continue
+            try:
+                idx = df.index.tz_localize(None) if df.index.tz is not None else df.index
+                after = df["High"][idx > datetime.fromisoformat(t["closed_at"]).replace(tzinfo=None)].head(15)
+            except Exception:
+                continue
+            if len(after) and float(after.max()) >= t["target"]:
+                missed.append(f"{t.get('name', t['ticker'])}：NT${t['exit_price']} 出場，"
+                              f"之後 15 日內漲到目標 NT${t['target']}")
+        if len(missed) >= 2:
+            findings.append((2, "missed",
+                f"{len(missed)} 筆提早停利，之後股價仍達原目標",
+                "到達 1R 後先出一半，剩下用追蹤止損抱到目標"))
+
+    findings.sort(key=lambda x: x[0])
+    rules = []
+    for f in findings:
+        if f[3] not in rules:
+            rules.append(f[3])
+    for default in ("每筆風險固定資本 2%，不因手感加碼",
+                    "進場前寫下停損與目標，盤中不改計畫",
+                    "連續 3 筆虧損後暫停交易一天"):
+        if len(rules) >= 3:
+            break
+        if default not in rules:
+            rules.append(default)
+
+    return {
+        "count":    len(recent),
+        "mistakes": [f[2] for f in findings if f[1] == "mistake"],
+        "missed":   missed,
+        "biases":   [f[2] for f in findings if f[1] == "bias"],
+        "rules":    rules[:3],
+    }

@@ -23,6 +23,7 @@ from widget import (
     calc_ma_alignment, calc_kbar_pattern, calc_obv_trend,
     calc_52w_position, detect_52w_breakout, volume_ratio,
     calc_support_resistance, calc_trading_signal, calc_strategy_stats,
+    calc_weekly_trend,
     TECH_UNIVERSE,
     fetch_prices_batch, fetch_taiex_prices, fetch_cnyes_news,
     analyze_catalysts, fetch_twse_foreign_buying,
@@ -227,11 +228,24 @@ def scan_swing_setups(prices: Dict[str, pd.DataFrame],
                     "kd_score": 10,
                 })
 
-    # Score and sort
+    # Score and sort — 週線確認：同向加分、逆勢（週線空頭）大幅降分並標示
+    wk_cache: Dict[str, dict] = {}
     for s in setups:
+        t = s["ticker"]
+        if t not in wk_cache:
+            wk_cache[t] = calc_weekly_trend(prices.get(t))
+        wk = wk_cache[t]
+        s["weekly_trend"] = wk["trend"]
+        s["weekly_label"] = wk["label"]
         s["setup_score"] = _swing_score(s)
-        s["name"] = TECH_UNIVERSE.get(s["ticker"], {}).get("name", s["ticker"].replace(".TW", ""))
-        s["sector"] = TECH_UNIVERSE.get(s["ticker"], {}).get("sector", "")
+        if wk["trend"] == "up":
+            s["setup_score"] += 8
+            s.setdefault("reasons", []).append("週線多頭，日週同向")
+        elif wk["trend"] == "down":
+            s["setup_score"] -= 20
+            s.setdefault("reasons", []).append("⚠️ 週線空頭：逆勢反彈，半倉或跳過")
+        s["name"] = TECH_UNIVERSE.get(t, {}).get("name", t.replace(".TW", ""))
+        s["sector"] = TECH_UNIVERSE.get(t, {}).get("sector", "")
 
     setups.sort(key=lambda x: x["setup_score"], reverse=True)
     return setups

@@ -913,6 +913,40 @@ def calc_support_resistance(df: pd.DataFrame) -> dict:
     }
 
 
+def calc_weekly_trend(df: pd.DataFrame) -> dict:
+    """
+    週線趨勢（多時間框架確認）— 日線訊號要和週線方向一致才可靠
+    週線多頭：週收盤 > 10週均線 > 20週均線，且 10週均線上揚
+    週線空頭：週收盤 < 10週均線 < 20週均線，且 10週均線下彎
+    其餘為盤整。不足 12 週資料回傳 unknown（20週均線不足時只看 10週）。
+    """
+    empty = {"trend": "unknown", "label": "週線資料不足", "bonus": 0,
+             "wma10": None, "wma20": None, "w_rsi": None}
+    if df is None or len(df) < 60 or not isinstance(df.index, pd.DatetimeIndex):
+        return empty
+    wk = df["Close"].resample("W-FRI").last().dropna()
+    if len(wk) < 12:
+        return empty
+
+    wma10    = wk.rolling(10).mean()
+    last     = float(wk.iloc[-1])
+    m10      = float(wma10.iloc[-1])
+    m10_prev = float(wma10.iloc[-3])
+    m20      = float(wk.rolling(20).mean().iloc[-1]) if len(wk) >= 20 else None
+    w_rsi    = round(calc_rsi(wk), 1) if len(wk) >= 15 else None
+
+    if last > m10 and (m20 is None or m10 > m20) and m10 > m10_prev:
+        trend, label, bonus = "up", "週線多頭", 3
+    elif last < m10 and (m20 is None or m10 < m20) and m10 < m10_prev:
+        trend, label, bonus = "down", "週線空頭", -5
+    else:
+        trend, label, bonus = "flat", "週線盤整", 0
+
+    return {"trend": trend, "label": label, "bonus": bonus,
+            "wma10": round(m10, 2), "wma20": round(m20, 2) if m20 else None,
+            "w_rsi": w_rsi}
+
+
 def calc_trading_signal(sres: dict) -> dict:
     """
     綜合買進/持有/賣出訊號
@@ -991,6 +1025,13 @@ def calc_trading_signal(sres: dict) -> dict:
     if fi_stk >= 5:
         buy_cnt += 1;  reasons.append("投信連買 5+ 天")
 
+    # ── 週線方向（日線＋週線雙重確認）────────────────────────────────────────
+    wk_trend = sres.get("weekly_trend", "unknown")
+    if wk_trend == "up":
+        buy_cnt += 1;  reasons.append("週線多頭，日週同向")
+    elif wk_trend == "down":
+        sell_cnt += 1; reasons.append("週線空頭，日線反彈易失敗")
+
     # ── 判斷訊號 ─────────────────────────────────────────────────────────────
     net = buy_cnt - sell_cnt
     if buy_cnt >= 5 or (net >= 3 and score >= 62):
@@ -1002,6 +1043,12 @@ def calc_trading_signal(sres: dict) -> dict:
     else:
         signal = "HOLD"
         confidence = 45 + abs(net) * 5
+
+    # 週線空頭時不給買進訊號——逆勢買點降為觀望
+    if signal == "BUY" and wk_trend == "down":
+        signal = "HOLD"
+        confidence = 50
+        reasons.insert(0, "週線空頭：日線買訊降為觀望")
 
     return {
         "signal":     signal,
@@ -1625,6 +1672,32 @@ def calc_trust_streak(multi_day: Dict[str, List[float]]) -> Dict[str, int]:
     return streaks
 
 
+# 新聞「翻成交易語言」：短線事件 vs 長線結構性題材
+_NEWS_SHORT_KW = ("月營收", "法說", "升評", "調升目標價", "目標價", "漲停", "除息", "除權",
+                  "填息", "股東會", "季報", "財報", "EPS", "庫藏股", "處置", "注意股")
+_NEWS_LONG_KW  = ("訂單", "長約", "擴產", "新廠", "量產", "認證", "合作", "結盟", "併購",
+                  "入股", "供應鏈", "打入", "轉型", "產能", "研發", "專利", "AI伺服器")
+
+
+def classify_news_horizon(text: str) -> dict:
+    """
+    判斷新聞影響是短線（1-5 日情緒）還是長線（數月以上基本面）。
+    回傳 horizon(short/long/both/unknown)、horizon_label、horizon_note。
+    """
+    s_hit = any(k in text for k in _NEWS_SHORT_KW)
+    l_hit = any(k in text for k in _NEWS_LONG_KW)
+    if s_hit and l_hit:
+        return {"horizon": "both", "horizon_label": "短線＋長線",
+                "horizon_note": "短線有情緒推升，長線也有基本面支撐；回檔仍可分批布局"}
+    if l_hit:
+        return {"horizon": "long", "horizon_label": "長線題材",
+                "horizon_note": "影響要數月後才反映在營收；別追第一根長紅，等回檔分批"}
+    if s_hit:
+        return {"horizon": "short", "horizon_label": "短線事件",
+                "horizon_note": "影響多在 1-5 個交易日內消化；利多出盡易回落，不宜重押"}
+    return {"horizon": "unknown", "horizon_label": "", "horizon_note": ""}
+
+
 def detect_order_signals(news_list: List[Dict]) -> List[Dict]:
     """
     掃描所有新聞，偵測可能影響股價的訂單/合作/認證/升評訊號。
@@ -1756,6 +1829,7 @@ def detect_order_signals(news_list: List[Dict]) -> List[Dict]:
             "magnitude_icon":  magnitude_icon,
             "base_score":      base_score,
             "entry_note":      entry_note,
+            **classify_news_horizon(title + " " + summary),
         })
 
     # Sort by score (desc), deduplicate by ticker (keep highest score per stock)
@@ -3016,10 +3090,13 @@ def score_stock(ticker: str, df: pd.DataFrame, catalyst_bonus: int, foreign_net:
     elif short_margin_ratio <=  3 and margin_score >= 0: margin_score += 1  # 幾無空頭純多格局
     margin_score = max(-5, min(5, margin_score))
 
+    # 週線趨勢 — 日線訊號需週線確認（多頭 +3 / 空頭 −5）
+    wk_info = calc_weekly_trend(df)
+
     macro_adj  = max(-10, min(10, int(macro_bonus)))
     total = min(100, max(0, vol_score + mom_score + tech + kbar_score + cat_score
                            + fi_bonus + streak_bonus + trust_bonus + bo_score + macro_adj
-                           + margin_score))
+                           + margin_score + wk_info["bonus"]))
 
     last_price = float(close.iloc[-1])
     atr        = calc_atr(df)
@@ -3043,6 +3120,7 @@ def score_stock(ticker: str, df: pd.DataFrame, catalyst_bonus: int, foreign_net:
         "stage": ma_info["stage"], "obv_trend": obv_tr,
         "bo_type": bo["type"], "sepa_count": ma_info.get("sepa_count", 0),
         "mom20d": round(mom20d, 2), "trust_bonus": trust_bonus,
+        "weekly_trend": wk_info["trend"],
     }
     trade_sig  = calc_trading_signal(_partial)
     _partial.update({
@@ -3110,6 +3188,12 @@ def score_stock(ticker: str, df: pd.DataFrame, catalyst_bonus: int, foreign_net:
         "target_price": round(last_price * (1 + target_pct / 100), 2),
         "stop_loss":    round(last_price - 1.5 * atr, 2),
         "stop_pct":     round((-1.5 * atr / last_price) * 100, 2) if last_price > 0 else 0,
+        # 風險報酬比 = (目標 − 現價) / (現價 − 停損)
+        "rr_ratio":     round((last_price * target_pct / 100) / (1.5 * atr), 2) if atr > 0 else 0,
+        "weekly_trend": wk_info["trend"],
+        "weekly_label": wk_info["label"],
+        "wma10":        wk_info["wma10"],
+        "w_rsi":        wk_info["w_rsi"],
         "sell_note":    sell_note,
         "foreign_net":  foreign_net,
         # ── 新增：支撐壓力 / 交易訊號 / 策略統計 / 四階段計劃 ──
@@ -3843,6 +3927,108 @@ def analyze_holdings(price_data: Dict[str, pd.DataFrame]) -> List[Dict]:
             "error": False,
         })
     return result
+
+def analyze_portfolio_risk(positions: List[Dict], price_data: Dict[str, pd.DataFrame],
+                           taiex_close: Optional[pd.Series] = None,
+                           max_single_pct: float = 30.0, max_sector_pct: float = 50.0,
+                           base_total: Optional[float] = None) -> Dict:
+    """
+    投資組合風險檢查：
+      ① 過度集中（單一持股 / 單一類股占比）
+      ② 隱藏連動（近 60 日報酬相關係數 ≥ 0.75 的持股對）
+      ③ 依風險調整的再平衡建議
+      ④ 大盤下跌 20% 壓力測試（以 60 日 Beta 估算）與不放空的避險做法
+    positions: [{"ticker", "name", "value"(NT$ 市值), "sector"(可省略)}]
+    base_total: 占比的分母（例如總資本含現金）；省略時用持股總市值
+    """
+    pos = [p for p in positions if p.get("value", 0) > 0]
+    invested = sum(p["value"] for p in pos)
+    if invested <= 0:
+        return {}
+    total = max(base_total or 0, invested)
+
+    for p in pos:
+        p["weight"] = p["value"] / total * 100
+        p["sector"] = p.get("sector") or TECH_UNIVERSE.get(p["ticker"], {}).get("sector", "") or "其他"
+
+    issues: List[str] = []
+    actions: List[str] = []
+
+    # ① 集中度
+    for p in sorted(pos, key=lambda x: -x["weight"]):
+        if p["weight"] > max_single_pct and (len(pos) > 1 or base_total):
+            trim = p["value"] - total * max_single_pct / 100
+            issues.append(f"{p['name']} 占 {p['weight']:.0f}%，超過單一持股上限 {max_single_pct:.0f}%")
+            actions.append(f"減碼 {p['name']} 約 NT${trim:,.0f}，讓占比降到 {max_single_pct:.0f}% 以下")
+    sectors: Dict[str, float] = {}
+    for p in pos:
+        sectors[p["sector"]] = sectors.get(p["sector"], 0) + p["weight"]
+    for sec, w in sorted(sectors.items(), key=lambda x: -x[1]):
+        if w > max_sector_pct and len(sectors) > 1:
+            issues.append(f"「{sec}」類股合計 {w:.0f}%，產業風險集中")
+            actions.append(f"新資金優先放在「{sec}」以外的類股，直到占比低於 {max_sector_pct:.0f}%")
+        elif w > max_sector_pct:
+            issues.append(f"全部持股都在「{sec}」，一個產業利空會同時打到所有部位")
+            actions.append("下一筆資金考慮金融、電信或高股息 ETF 等低連動標的")
+
+    # ② 隱藏連動
+    rets = {}
+    for p in pos:
+        df = price_data.get(p["ticker"])
+        if df is not None and len(df) >= 30:
+            rets[p["ticker"]] = df["Close"].pct_change().tail(60)
+    corr_pairs = []
+    if len(rets) >= 2:
+        cm = pd.DataFrame(rets).dropna(how="all").corr(min_periods=20)
+        names = {p["ticker"]: p["name"] for p in pos}
+        tks = list(cm.columns)
+        for i in range(len(tks)):
+            for j in range(i + 1, len(tks)):
+                c = cm.iloc[i, j]
+                if pd.notna(c) and c >= 0.75:
+                    corr_pairs.append((names[tks[i]], names[tks[j]], round(float(c), 2)))
+    corr_pairs.sort(key=lambda x: -x[2])
+    for a, b, c in corr_pairs[:3]:
+        issues.append(f"{a} 與 {b} 走勢高度連動（相關係數 {c}），看似分散其實是同一筆押注")
+    if corr_pairs:
+        actions.append("高度連動的持股保留基本面較強的一檔，另一檔逐步換成低連動標的")
+
+    # ④ 壓力測試：Beta × −20%
+    port_beta = None
+    if taiex_close is not None and len(taiex_close) >= 30 and rets:
+        mret = taiex_close.pct_change().tail(60)
+        betas = {}
+        for t, r in rets.items():
+            j = pd.concat([r, mret], axis=1, join="inner").dropna()
+            if len(j) >= 20 and j.iloc[:, 1].var() > 0:
+                betas[t] = float(j.iloc[:, 0].cov(j.iloc[:, 1]) / j.iloc[:, 1].var())
+        if betas:
+            covered = sum(p["weight"] for p in pos if p["ticker"] in betas)
+            port_beta = sum(betas[p["ticker"]] * p["weight"] for p in pos if p["ticker"] in betas) / covered
+    beta_used  = port_beta if port_beta is not None else 1.0
+    stress_pct = -20.0 * beta_used
+    stress_amt = invested * stress_pct / 100
+
+    hedges = ["把現金比重提高到兩成以上，跌 20% 時才有子彈分批加碼"]
+    if beta_used >= 1.2:
+        hedges.insert(0, f"組合 Beta {beta_used:.2f}，波動比大盤大；先減碼高 Beta 個股")
+    hedges.append("每檔設好停損價，跌破就執行，不攤平虧損部位")
+    hedges.append("加入低 Beta 標的（金融、電信、高股息 ETF）降低整體波動")
+
+    return {
+        "total": invested,
+        "base_total": total,
+        "positions": sorted(pos, key=lambda x: -x["weight"]),
+        "sectors": dict(sorted(sectors.items(), key=lambda x: -x[1])),
+        "corr_pairs": corr_pairs,
+        "beta": round(port_beta, 2) if port_beta is not None else None,
+        "stress_pct": round(stress_pct, 1),
+        "stress_amt": round(stress_amt),
+        "issues": issues,
+        "actions": actions,
+        "hedges": hedges,
+    }
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  顯示函數

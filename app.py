@@ -40,11 +40,11 @@ try:
         open_trade, close_trade, update_stop,
         get_open_trades, get_closed_trades, compute_stats, daily_risk_check,
         CAPITAL, RISK_PER_TRADE_PCT, DAILY_LOSS_LIMIT, MONTHLY_LOSS_LIMIT,
-        MAX_POSITIONS,
+        MAX_POSITIONS, MAX_NOTIONAL_PCT, review_trades,
     )
     from widget import (
         fetch_prices_batch, fetch_taiex_prices, calc_market_direction,
-        TECH_UNIVERSE,
+        analyze_portfolio_risk, TECH_UNIVERSE,
     )
     from dip_watch import market_drop
 except Exception as _e:
@@ -584,6 +584,33 @@ elif "部位管理" in view:
     if not open_t:
         st.info("目前無開放部位。至「波段掃描」開倉。")
     else:
+        # ── 投資組合風險檢查：集中度 / 隱藏連動 / 大盤 −20% 壓力測試 ──────────
+        _rp = []
+        for t in open_t:
+            _df = prices.get(t["ticker"])
+            _px = float(_df["Close"].iloc[-1]) if _df is not None and len(_df) else t["entry"]
+            _rp.append({"ticker": t["ticker"], "name": t["name"], "value": _px * t["shares"]})
+        _pr = analyze_portfolio_risk(_rp, prices, taiex,
+                                     max_single_pct=MAX_NOTIONAL_PCT * 100, base_total=CAPITAL)
+        if _pr:
+            with st.expander("🩺 投資組合風險檢查", expanded=bool(_pr["issues"])):
+                _c1, _c2, _c3 = st.columns(3)
+                _c1.metric("持倉市值", f"NT${_pr['total']:,.0f}",
+                           f"資本 {_pr['total'] / CAPITAL * 100:.0f}%", delta_color="off")
+                _c2.metric("組合 Beta", f"{_pr['beta']:.2f}" if _pr["beta"] is not None else "—")
+                _c3.metric("大盤跌 20% 時", f"−NT${abs(_pr['stress_amt']):,.0f}",
+                           f"資本 {_pr['stress_amt'] / CAPITAL * 100:.1f}%", delta_color="off")
+                if _pr["stress_amt"] < -MONTHLY_LOSS_LIMIT:
+                    st.error(f"⛔ 壓力測試虧損超過月虧損上限 NT${MONTHLY_LOSS_LIMIT:,}，先降低持倉")
+                if _pr["issues"]:
+                    for _t in _pr["issues"]:
+                        st.markdown(f"- ⚠️ {_t}")
+                    for _t in _pr["actions"]:
+                        st.markdown(f"- 🔁 {_t}")
+                elif len(open_t) >= 2:
+                    st.success("部位分散良好：沒有過度集中或高度連動")
+                st.caption("避險：" + "；".join(_pr["hedges"]))
+
         for t in open_t:
             df   = prices.get(t["ticker"])
             live = float(df["Close"].iloc[-1]) if df is not None and len(df) else t["entry"]
@@ -652,6 +679,25 @@ elif "歷史績效" in view:
         c1b, c2b = st.columns(2)
         c1b.metric("平均獲利",  f"NT${stats['avg_win']:,}")
         c2b.metric("平均虧損",  f"NT${stats['avg_loss']:,}")
+
+        # ── 交易紀錄檢討：重複犯的錯 / 錯過的機會 / 行為偏誤 → 3 條規則 ──────
+        _rv = review_trades(closed, prices)
+        st.divider()
+        st.markdown(f"#### 🔍 交易檢討（最近 {_rv['count']} 筆）")
+        if _rv["count"] < 3:
+            st.caption("累積 3 筆以上已平倉交易後才會產生檢討。")
+        else:
+            if not (_rv["mistakes"] or _rv["missed"] or _rv["biases"]):
+                st.success("最近的交易沒有發現明顯的重複錯誤，維持紀律。")
+            for _t in _rv["mistakes"]:
+                st.markdown(f"- ❌ {_t}")
+            for _t in _rv["missed"]:
+                st.markdown(f"- 💸 {_t}")
+            for _t in _rv["biases"]:
+                st.markdown(f"- 🧠 {_t}")
+            st.markdown("**📏 立即執行的 3 條規則**")
+            for _i, _t in enumerate(_rv["rules"], 1):
+                st.markdown(f"{_i}. {_t}")
 
         # Monthly P&L bar chart
         if stats["monthly_pnl"]:
