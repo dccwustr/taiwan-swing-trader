@@ -30,6 +30,28 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+# Streamlit Cloud 拉新程式碼時不會重啟 Python：舊模組還留在 sys.modules，
+# 新的 app.py 就會 ImportError（2026-11-03 實際發生）。原始檔變了就丟掉舊模組重新載入。
+def _refresh_local_modules(names=("scanner", "risk", "widget", "trade_check", "dip_watch")):
+    for _name in names:
+        _mod = sys.modules.get(_name)
+        _file = getattr(_mod, "__file__", None)
+        try:
+            _changed = _mod is not None and getattr(_mod, "_src_mtime", None) != os.path.getmtime(_file)
+        except (OSError, TypeError):
+            _changed = True
+        if _changed:
+            sys.modules.pop(_name, None)
+
+
+def _stamp_local_modules(names=("scanner", "risk", "widget", "trade_check", "dip_watch")):
+    for _name in names:
+        _mod = sys.modules.get(_name)
+        if _mod is not None and getattr(_mod, "__file__", None):
+            _mod._src_mtime = os.path.getmtime(_mod.__file__)
+
+
+_refresh_local_modules()
 try:
     from scanner import (
         scan_swing_setups, scan_daytrade_setups,
@@ -52,6 +74,7 @@ except Exception as _e:
     st.error(f"載入失敗：{_e}")
     import traceback; st.code(traceback.format_exc())
     st.stop()
+_stamp_local_modules()
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CSS
