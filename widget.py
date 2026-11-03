@@ -20,6 +20,15 @@ warnings.filterwarnings("ignore")
 try:
     import yfinance as yf
     HAS_YF = True
+    # yfinance<1.0 的 yf.download 用全域 shared._DFS，同時呼叫會互相覆蓋 → 加鎖依序執行，
+    # 讓 app.py 可以安全地把 Yahoo 以外的資料來源並行抓取。
+    import threading as _threading
+    _YF_DL_LOCK = _threading.RLock()
+    _yf_download_orig = yf.download
+    def _yf_download_locked(*args, **kwargs):
+        with _YF_DL_LOCK:
+            return _yf_download_orig(*args, **kwargs)
+    yf.download = _yf_download_locked
 except Exception:
     HAS_YF = False
     yf = None  # type: ignore
@@ -150,14 +159,14 @@ TECH_UNIVERSE: Dict[str, Dict] = {
     "6277.TW": {"name":"宏正自動",  "en":"ATEN International", "sector":"KVM/網通",  "supply":[]},
     "2332.TW": {"name":"友訊科技",  "en":"D-Link",             "sector":"網通設備",  "supply":[]},
     "3062.TW": {"name":"建漢科技",  "en":"CyberTAN Technology","sector":"網通ODM",   "supply":["AI"]},
-    "3706.TW": {"name":"神基科技",  "en":"MiTAC Holdings",     "sector":"網通/電腦", "supply":[]},
+    "3706.TW": {"name":"神達",      "en":"MiTAC Holdings",     "sector":"網通/電腦", "supply":[]},
     # ── 遊戲 Gaming ──────────────────────────────────────────────────────────
     "5478.TW": {"name":"智冠科技",  "en":"Soft-World Int'l",   "sector":"遊戲發行",  "supply":[]},
-    "6180.TW": {"name":"加奇數位",  "en":"Gamania Digital",    "sector":"手遊",      "supply":[]},
-    "6111.TW": {"name":"大宇資訊",  "en":"Softstar Entertainment","sector":"電腦遊戲","supply":[]},
+    "6180.TW": {"name":"橘子",      "en":"Gamania Digital",    "sector":"手遊",      "supply":[]},
+    "6111.TW": {"name":"光聚晶電",  "en":"Softstar Entertainment","sector":"電腦遊戲","supply":[]},
     "4943.TW": {"name":"康控-KY",   "en":"Concraft Holding",   "sector":"精密電子",  "supply":[]},
     # ── 應用軟體 / IT服務 ────────────────────────────────────────────────────
-    "6510.TW": {"name":"精誠資訊",  "en":"Systex Corporation", "sector":"IT服務",    "supply":["AI"]},
+    "6214.TW": {"name":"精誠",      "en":"Systex Corporation", "sector":"IT服務",    "supply":["AI"]},
     "6104.TW": {"name":"創惟科技",  "en":"Genesys Logic",      "sector":"USB/橋接IC","supply":["Apple"]},
     "2353.TW": {"name":"宏碁",      "en":"Acer",               "sector":"3C品牌",    "supply":[]},
     # ── 電動車 EV ────────────────────────────────────────────────────────────
@@ -167,18 +176,18 @@ TECH_UNIVERSE: Dict[str, Dict] = {
     # ── 綠能 Green Energy ────────────────────────────────────────────────────
     "3576.TW": {"name":"聯合再生",  "en":"United Renewable Energy","sector":"太陽能", "supply":["綠能"]},
     "6443.TW": {"name":"元晶太陽能","en":"TSEC Corporation",   "sector":"太陽能電池","supply":["綠能"]},
-    "6412.TW": {"name":"奇士達",    "en":"Chicony Power Tech", "sector":"電源模組",  "supply":["AI","綠能"]},
+    "6412.TW": {"name":"群電",      "en":"Chicony Power Tech", "sector":"電源模組",  "supply":["AI","綠能"]},
     "1519.TW": {"name":"華城電機",  "en":"Fortune Electric",   "sector":"電力系統",  "supply":["綠能"]},
-    "3519.TW": {"name":"碩天科技",  "en":"Voltronic Power",    "sector":"UPS/電源",  "supply":["綠能"]},
+    "3617.TW": {"name":"碩天",      "en":"CyberPower Systems",    "sector":"UPS/電源",  "supply":["綠能"]},
     # ── 生技醫療 Biotech ─────────────────────────────────────────────────────
     "4743.TW": {"name":"合一生技",  "en":"CHC Healthcare",     "sector":"生技",      "supply":["生技"]},
     "6547.TW": {"name":"高端疫苗",  "en":"Medigen Vaccine",    "sector":"疫苗/生技", "supply":["生技"]},
     "4119.TW": {"name":"旭富製藥",  "en":"SCI Pharmtech",      "sector":"原料藥",    "supply":["生技"]},
     "1786.TW": {"name":"科妍生醫",  "en":"SciVision Biotech",  "sector":"醫美/生技", "supply":["生技"]},
-    "4166.TW": {"name":"智擎生技",  "en":"PharmaEngine",       "sector":"新藥",      "supply":["生技"]},
-    "4110.TW": {"name":"東洋製藥",  "en":"TTY Biopharm",       "sector":"學名藥",    "supply":["生技"]},
+    "4162.TW": {"name":"智擎",      "en":"PharmaEngine",       "sector":"新藥",      "supply":["生技"]},
+    "4105.TW": {"name":"東洋",      "en":"TTY Biopharm",       "sector":"學名藥",    "supply":["生技"]},
     # ── 手機供應鏈補充 ──────────────────────────────────────────────────────
-    "6285.TW": {"name":"華通電腦",  "en":"WNC Corporation",    "sector":"無線模組",  "supply":["Apple"]},
+    "6285.TW": {"name":"啟碁",      "en":"WNC Corporation",    "sector":"無線模組",  "supply":["Apple"]},
     # ── 面板 Displays ────────────────────────────────────────────────────────
     "2409.TW": {"name":"友達",      "en":"AUO",               "sector":"面板",      "supply":["Apple"]},
     "3481.TW": {"name":"群創",      "en":"Innolux",           "sector":"面板",      "supply":[]},
@@ -201,7 +210,7 @@ TECH_UNIVERSE: Dict[str, Dict] = {
     "2886.TW": {"name":"兆豐金",    "en":"Mega Financial",    "sector":"金融",      "supply":["金融"]},
     "2892.TW": {"name":"第一金",    "en":"First Financial",   "sector":"金融",      "supply":["金融"]},
     "2880.TW": {"name":"華南金",    "en":"Hua Nan Financial", "sector":"金融",      "supply":["金融"]},
-    "2883.TW": {"name":"開發金",    "en":"CDIB Financial",    "sector":"金融",      "supply":["金融"]},
+    "2883.TW": {"name":"凱基金",    "en":"KGI Financial",    "sector":"金融",      "supply":["金融"]},
 
     # ════════════════════════════════════════════════════════════════════════
     #  航運 Shipping
@@ -218,7 +227,7 @@ TECH_UNIVERSE: Dict[str, Dict] = {
     "8033.TW": {"name":"雷虎科技",  "en":"Thunder Tiger",     "sector":"無人機",    "supply":["國防"]},
     "2634.TW": {"name":"漢翔航空",  "en":"AIDC",              "sector":"航太/國防", "supply":["國防"]},
     "2630.TW": {"name":"亞洲航空",  "en":"Asia Air Survey",   "sector":"國防航太",  "supply":["國防"]},
-    "5371.TW": {"name":"中光電",    "en":"Coretronic Corp",   "sector":"無人機模組","supply":["國防","AI"]},
+    "3718.TW": {"name":"中光電投控","en":"Coretronic Holding",   "sector":"無人機模組","supply":["國防","AI"]},
     "5222.TW": {"name":"全訊科技",  "en":"Accton Sys Tech",   "sector":"微波/國防", "supply":["國防"]},
     "6753.TW": {"name":"龍德造船",  "en":"Long De Shipbldg",  "sector":"造船/國防", "supply":["國防"]},
 
@@ -227,7 +236,7 @@ TECH_UNIVERSE: Dict[str, Dict] = {
     # ════════════════════════════════════════════════════════════════════════
     "2002.TW": {"name":"中鋼",      "en":"China Steel",       "sector":"鋼鐵",      "supply":["原物料"]},
     "2015.TW": {"name":"豐興",      "en":"Feng Hsin Steel",   "sector":"鋼鐵",      "supply":["原物料"]},
-    "2023.TW": {"name":"燁聯",      "en":"Yieh United Steel", "sector":"鋼鐵",      "supply":["原物料"]},
+    "2023.TW": {"name":"燁輝",      "en":"Yieh Phui Steel", "sector":"鋼鐵",      "supply":["原物料"]},
     "1301.TW": {"name":"台塑",      "en":"Formosa Plastics",  "sector":"石化",      "supply":["原物料","石化"]},
     "1303.TW": {"name":"南亞",      "en":"Nan Ya Plastics",   "sector":"石化",      "supply":["原物料","石化"]},
     "1326.TW": {"name":"台化",      "en":"Formosa Chemicals", "sector":"石化",      "supply":["原物料","石化"]},
@@ -347,7 +356,7 @@ CATALYST_BENEFICIARIES = {
     "建設":    ["5522.TW","2542.TW","2504.TW","1102.TW","1101.TW"],
     # 新增主題受益股
     "玻纖布":  ["1802.TW","1815.TW","5475.TW","3037.TW","4958.TW","3044.TW","6213.TW"],
-    "無人機":  ["8033.TW","2634.TW","2630.TW","5371.TW","5222.TW","6753.TW"],
+    "無人機":  ["8033.TW","2634.TW","2630.TW","3718.TW","5222.TW","6753.TW"],
     "石化回升":["1301.TW","1303.TW","1326.TW","2002.TW"],
     "載板漲價":["3037.TW","8046.TW","3189.TW","4958.TW"],
     "HBM":    ["2408.TW","2344.TW","6239.TW","6488.TW","2330.TW"],
@@ -371,8 +380,9 @@ def calc_rsi(close: pd.Series, period: int = 14) -> float:
     delta = close.diff()
     up   = delta.clip(lower=0)
     down = (-delta).clip(lower=0)
-    avg_up   = up.ewm(alpha=1/period, min_periods=period).mean()
-    avg_down = down.ewm(alpha=1/period, min_periods=period).mean()
+    # Wilder 平滑（與券商軟體相同）：adjust=False，否則資料短時數值會偏離
+    avg_up   = up.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    avg_down = down.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
     rs = avg_up / avg_down
     rsi = 100 - (100 / (1 + rs))
     return float(rsi.iloc[-1]) if not rsi.empty else 50.0
@@ -392,14 +402,41 @@ def calc_atr(df: pd.DataFrame, period: int = 14) -> float:
         (high - close.shift()).abs(),
         (low  - close.shift()).abs()
     ], axis=1).max(axis=1)
-    atr = tr.ewm(span=period, adjust=False).mean()
+    atr = tr.ewm(alpha=1/period, adjust=False).mean()   # Wilder ATR
     return float(atr.iloc[-1]) if not atr.empty else 0.0
+
+# 台股一般交易日的累積成交量比例（2026-10 大型股 5 分 K 實測）：(開盤後分鐘數, 累積占全日比例)
+_INTRADAY_VOL_CURVE = [(0, 0.03), (25, 0.175), (55, 0.318), (85, 0.423), (115, 0.51), (145, 0.593),
+                       (175, 0.67), (205, 0.749), (235, 0.855), (250, 0.934), (270, 1.0)]
+
+
+def _session_fraction(now: Optional[datetime] = None) -> float:
+    """盤中已完成的全日成交量比例；非盤中回傳 1.0。"""
+    now = now or datetime.now(timezone(timedelta(hours=8)))
+    mins = (now.hour - 9) * 60 + now.minute
+    if now.weekday() >= 5 or mins < 0 or mins >= 270:
+        return 1.0
+    return float(np.interp(mins, *zip(*_INTRADAY_VOL_CURVE)))
+
+
+def _latest_volume_full_day(vol: pd.Series, now: Optional[datetime] = None) -> float:
+    """
+    最新一根的「全日等效」成交量。今天還沒收盤時，今日量只是半天的量，
+    直接和 20 日均量比會讓早上每一檔都像量縮 → 依盤中進度換算成全日估計值。
+    """
+    now = now or datetime.now(timezone(timedelta(hours=8)))
+    latest = float(vol.iloc[-1])
+    idx = vol.index[-1]
+    if hasattr(idx, "date") and idx.date() == now.date():
+        return latest / _session_fraction(now)
+    return latest
+
 
 def volume_ratio(vol: pd.Series, period: int = 20) -> float:
     avg = vol.iloc[-period-1:-1].mean()
     if avg == 0 or np.isnan(avg):
         return 1.0
-    return float(vol.iloc[-1] / avg)
+    return float(_latest_volume_full_day(vol) / avg)
 
 def ma_score(close: pd.Series) -> int:
     """Price above MA5, MA20, MA60 → score 0-3"""
@@ -583,8 +620,10 @@ def calc_stochastic(df: pd.DataFrame, k_period: int = 9, d_period: int = 3) -> d
     hh    = high.rolling(k_period).max()
     denom = (hh - ll).replace(0, np.nan)
     raw_k = 100 * (close - ll) / denom
-    K     = raw_k.ewm(span=d_period, adjust=False).mean()
-    D     = K.ewm(span=d_period, adjust=False).mean()
+    # 台灣券商 KD(9,3,3)：K = 2/3 × 前K + 1/3 × RSV；D = 2/3 × 前D + 1/3 × K → alpha = 1/3
+    # （原本 span=3 等於 alpha=1/2，與看盤軟體的 KD 對不起來）
+    K     = raw_k.ewm(alpha=1/d_period, adjust=False).mean()
+    D     = K.ewm(alpha=1/d_period, adjust=False).mean()
     k_val  = float(K.iloc[-1]) if not K.empty and not np.isnan(K.iloc[-1]) else 50.0
     d_val  = float(D.iloc[-1]) if not D.empty and not np.isnan(D.iloc[-1]) else 50.0
     k_prev = float(K.iloc[-2]) if len(K) > 1 else k_val
@@ -726,8 +765,8 @@ def detect_52w_breakout(df: pd.DataFrame) -> Dict:
     low52w      = float(close.iloc[-lookback:].min())
 
     last       = float(close.iloc[-1])
-    vol_ma20   = float(volume.rolling(20).mean().iloc[-1])
-    vol_latest = float(volume.iloc[-1])
+    vol_ma20   = float(volume.iloc[-21:-1].mean())   # 不含今日，否則半天量會拉低均量
+    vol_latest = _latest_volume_full_day(volume)
     vol_surge  = vol_latest / vol_ma20 if vol_ma20 > 0 else 1.0
 
     if prior_high <= 0:
@@ -1076,8 +1115,8 @@ def calc_strategy_stats(df: pd.DataFrame, hold_days: int = 5) -> dict:
 
     # 向量化指標
     delta    = close.diff()
-    up_s     = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14).mean()
-    dn_s     = (-delta).clip(lower=0).ewm(alpha=1/14, min_periods=14).mean()
+    up_s     = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    dn_s     = (-delta).clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     rsi_s    = 100 - 100 / (1 + up_s / dn_s.replace(0, 1e-10))
     ema12    = close.ewm(span=12, adjust=False).mean()
     ema26    = close.ewm(span=26, adjust=False).mean()
@@ -1089,7 +1128,8 @@ def calc_strategy_stats(df: pd.DataFrame, hold_days: int = 5) -> dict:
     # 避免連續訊號重疊（keep only new entries after hold_days gap）
     entries  = raw_sig & ~raw_sig.shift(1, fill_value=False)
 
-    fwd_ret  = close.shift(-hold_days) / close - 1
+    # 扣來回成本：手續費 0.1425%×2 + 證交稅 0.3%（小資戶的實際損益，否則勝率會被高估）
+    fwd_ret  = close.shift(-hold_days) / close - 1 - 0.00585
     ret_vals = fwd_ret[entries].dropna()
     if len(ret_vals) < 3:
         return empty
@@ -1508,59 +1548,125 @@ def fetch_ltn_news() -> List[Dict]:
     return news
 
 
-def fetch_twse_foreign_multi_day(days: int = 5) -> Dict[str, List[float]]:
-    """
-    抓取最近 N 個交易日的外資買賣超資料。
-    回傳 {ticker: [最新日, 前1日, 前2日, ...]}，正數=買超（千張），負數=賣超。
-    用於判斷「外資連續買超/賣超 N 天」趨勢。
-    """
-    from datetime import timezone as _tz, timedelta as _td
-    result: Dict[str, List[float]] = {}
-    tw_now = datetime.now(tz=_tz(_td(hours=8)))
+def _chip_num(v) -> float:
+    try:
+        return float(str(v).replace(",", "").replace("+", "").strip())
+    except (ValueError, TypeError):
+        return 0.0
 
-    # 嘗試最近10個日曆日，取到 days 個有效交易日
-    dates_tried = 0
-    dates_ok    = 0
-    day_offset  = 0
-    daily_data: List[Dict[str, float]] = []
 
-    while dates_ok < days and dates_tried < 14:
-        d = tw_now - _td(days=day_offset)
-        day_offset += 1
-        dates_tried += 1
-        if d.weekday() >= 5:   # Skip Saturday / Sunday
+def _parse_t86_rows(rows: List[list]) -> Dict[str, Dict[str, float]]:
+    """
+    TWSE T86 三大法人日報 → {ticker: {foreign, trust, dealer, total}}（單位：張）。
+    欄位以證交所回傳的 fields 為準（2026-11 實測，共 19 欄）：
+      0 代號 1 名稱 | 2-4 外陸資(不含外資自營) 買/賣/淨 | 5-7 外資自營 買/賣/淨
+      8-10 投信 買/賣/淨 | 11 自營商淨 | 12-14 自營(自行) | 15-17 自營(避險) | 18 三大法人合計
+    """
+    out: Dict[str, Dict[str, float]] = {}
+    for row in rows:
+        if len(row) < 19 or not str(row[0]).strip():
             continue
-        date_str = d.strftime("%Y%m%d")
-        url = f"https://www.twse.com.tw/rwd/zh/fund/TWT53U?response=json&date={date_str}"
+        out[str(row[0]).strip() + ".TW"] = {
+            "foreign": (_chip_num(row[4]) + _chip_num(row[7])) / 1000,
+            "trust":   _chip_num(row[10]) / 1000,
+            "dealer":  _chip_num(row[11]) / 1000,
+            "total":   _chip_num(row[18]) / 1000,
+        }
+    return out
+
+
+def _parse_tpex_insti_rows(rows: List[list]) -> Dict[str, Dict[str, float]]:
+    """
+    TPEx 三大法人（上櫃）→ 同上格式。欄位（24 欄）：
+      0 代號 1 名稱 | 2-4 外資(不含自營) | 5-7 外資自營 | 8-10 外資合計 | 11-13 投信
+      14-16 自營(自行) | 17-19 自營(避險) | 20-22 自營合計 | 23 三大法人合計
+    上櫃股在本專案一律用 .TW 當 key（見 fetch_prices_batch）。
+    """
+    out: Dict[str, Dict[str, float]] = {}
+    for row in rows:
+        if len(row) < 24 or not str(row[0]).strip():
+            continue
+        out[str(row[0]).strip() + ".TW"] = {
+            "foreign": _chip_num(row[10]) / 1000,
+            "trust":   _chip_num(row[13]) / 1000,
+            "dealer":  _chip_num(row[22]) / 1000,
+            "total":   _chip_num(row[23]) / 1000,
+        }
+    return out
+
+
+# date → (抓取時間, 資料)。有資料就永久快取（歷史不會變）；沒資料（休市/尚未公布）5 分鐘後可重試。
+_INSTI_CACHE: Dict[str, Tuple[float, Dict]] = {}
+
+
+def fetch_insti_day(day: datetime) -> Dict[str, Dict[str, float]]:
+    """某交易日的三大法人（上市 + 上櫃）。休市或尚未公布（約 15:00 前）回傳 {}。"""
+    key = day.strftime("%Y%m%d")
+    hit = _INSTI_CACHE.get(key)
+    if hit and (hit[1] or time.time() - hit[0] < 300):
+        return hit[1]
+    data: Dict[str, Dict[str, float]] = {}
+    try:
+        r = requests.get("https://www.twse.com.tw/rwd/zh/fund/T86",
+                         params={"response": "json", "date": key, "selectType": "ALLBUT0999"},
+                         headers=HEADERS, timeout=12)
+        j = r.json()
+        fields = j.get("fields") or []
+        # 欄位若被證交所改掉就直接報錯，不能再悄悄讀錯欄
+        if j.get("data") and (len(fields) < 19 or "投信" not in fields[10] or "三大法人" not in fields[18]):
+            print(f"⚠️ T86 欄位改變，法人資料停用: {fields}", file=sys.stderr)
+        else:
+            data.update(_parse_t86_rows(j.get("data") or []))
+    except Exception as e:
+        print(f"⚠️ T86 {key} 失敗: {e}", file=sys.stderr)
+    if data:   # 上市有資料才查上櫃（休市日少打一次）
         try:
-            r = requests.get(url, headers=HEADERS, timeout=8)
-            data = r.json()
-            rows = data.get("data", [])
-            if not rows:
-                continue   # holiday or no data
-            day_dict: Dict[str, float] = {}
-            for row in rows:
-                if len(row) >= 5:
-                    code = row[0].strip()
-                    try:
-                        net = float(row[4].replace(",", "").replace("+", ""))
-                        day_dict[code + ".TW"] = net / 1000   # 千張
-                    except (ValueError, IndexError):
-                        pass
-            daily_data.append(day_dict)
-            dates_ok += 1
-        except Exception:
+            r = requests.get("https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade",
+                             params={"type": "Daily", "sect": "AL", "response": "json",
+                                     "date": day.strftime("%Y/%m/%d"), "id": ""},
+                             headers=HEADERS, timeout=15)
+            tables = r.json().get("tables") or []
+            if tables:
+                data.update(_parse_tpex_insti_rows(tables[0].get("data") or []))
+        except Exception as e:
+            print(f"⚠️ TPEx 法人 {key} 失敗: {e}", file=sys.stderr)
+    _INSTI_CACHE[key] = (time.time(), data)
+    return data
+
+
+def fetch_recent_insti(days: int = 5, now: Optional[datetime] = None) -> List[Tuple[str, Dict]]:
+    """最近 N 個有資料的交易日，由新到舊：[(YYYY-MM-DD, {ticker: {...}}), ...]"""
+    now = now or datetime.now(timezone(timedelta(hours=8)))
+    out: List[Tuple[str, Dict]] = []
+    for off in range(16):
+        if len(out) >= days:
+            break
+        d = now - timedelta(days=off)
+        if d.weekday() >= 5:
             continue
+        if d.strftime("%Y%m%d") not in _INSTI_CACHE:
+            time.sleep(0.5)   # TWSE 約限 3 次/5 秒
+        data = fetch_insti_day(d)
+        if data:
+            out.append((d.strftime("%Y-%m-%d"), data))
+    return out
 
-    if not daily_data:
-        return result
 
-    # Transpose: result[ticker] = [day0_net, day1_net, ...]
-    all_tickers = set(t for d in daily_data for t in d)
-    for ticker in all_tickers:
-        result[ticker] = [d.get(ticker, 0.0) for d in daily_data]
+def insti_asof() -> str:
+    """目前法人資料的日期（YYYY-MM-DD）；抓不到回傳空字串。"""
+    rec = fetch_recent_insti(1)
+    return rec[0][0] if rec else ""
 
-    return result
+
+def _insti_multi(field: str, days: int) -> Dict[str, List[float]]:
+    daily = [d for _, d in fetch_recent_insti(days)]
+    tickers = {t for d in daily for t in d}
+    return {t: [d.get(t, {}).get(field, 0.0) for d in daily] for t in tickers}
+
+
+def fetch_twse_foreign_multi_day(days: int = 5) -> Dict[str, List[float]]:
+    """外資近 N 日買賣超（張），{ticker: [最新日, 前1日, ...]}；上市 + 上櫃。"""
+    return _insti_multi("foreign", days)
 
 
 def calc_foreign_streak(multi_day: Dict[str, List[float]]) -> Dict[str, int]:
@@ -1595,54 +1701,8 @@ def calc_foreign_streak(multi_day: Dict[str, List[float]]) -> Dict[str, int]:
 
 
 def fetch_twse_trust_multi_day(days: int = 5) -> Dict[str, List[float]]:
-    """
-    抓取最近 N 個交易日的投信買賣超 (T86 欄位7: 投信淨買超千張)。
-    回傳 {ticker: [最新日, 前1日, ...]}，用於計算連續買超/賣超天數。
-    投信連續買超 = 台灣短線最強預測信號（比外資連買更精準）
-    """
-    from datetime import timezone as _tz, timedelta as _td
-    result: Dict[str, List[float]] = {}
-    tw_now    = datetime.now(tz=_tz(_td(hours=8)))
-    daily_data: List[Dict[str, float]] = []
-    dates_tried = dates_ok = day_offset = 0
-
-    while dates_ok < days and dates_tried < 14:
-        d = tw_now - _td(days=day_offset)
-        day_offset += 1; dates_tried += 1
-        if d.weekday() >= 5:
-            continue
-        date_str = d.strftime("%Y%m%d")
-        url = (f"https://www.twse.com.tw/rwd/zh/fund/T86"
-               f"?response=json&date={date_str}&selectType=ALLBUT0999")
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=8)
-            data = r.json()
-            rows = data.get("data", [])
-            if not rows:
-                continue
-            day_dict: Dict[str, float] = {}
-            for row in rows:
-                if len(row) < 8:
-                    continue
-                code = row[0].strip()
-                if not code:
-                    continue
-                try:
-                    net = float(str(row[7]).replace(",", "").replace("+", "")) / 1000
-                    day_dict[code + ".TW"] = net
-                except (ValueError, TypeError):
-                    pass
-            daily_data.append(day_dict)
-            dates_ok += 1
-        except Exception:
-            continue
-
-    if not daily_data:
-        return result
-    all_tickers = set(t for d in daily_data for t in d)
-    for ticker in all_tickers:
-        result[ticker] = [d.get(ticker, 0.0) for d in daily_data]
-    return result
+    """投信近 N 日買賣超（張），{ticker: [最新日, 前1日, ...]}；上市 + 上櫃。"""
+    return _insti_multi("trust", days)
 
 
 def calc_trust_streak(multi_day: Dict[str, List[float]]) -> Dict[str, int]:
@@ -1848,11 +1908,13 @@ def detect_order_signals(news_list: List[Dict]) -> List[Dict]:
 
 def fetch_cnyes_news(limit: int = 60) -> List[Dict]:
     """鉅亨網科技財經新聞"""
-    urls = [
-        f"https://api.cnyes.com/media/api/v1/newslist/category/tw_stock?limit={limit}",
-        f"https://api.cnyes.com/media/api/v1/newslist/category/technology?limit={limit}",
-    ]
+    # API 每頁最多 30 則（limit 再大也一樣）；分類名是 tech（technology 會回 422，科技新聞一直是空的）
+    pages = max(1, min(4, limit // 30))
+    urls = [f"https://api.cnyes.com/media/api/v1/newslist/category/tw_stock?limit=30&page={p}"
+            for p in range(1, pages + 1)]
+    urls.append("https://api.cnyes.com/media/api/v1/newslist/category/tech?limit=30")
     news = []
+    seen_titles = set()
     for url in urls:
         try:
             r = requests.get(url, headers=HEADERS, timeout=10)
@@ -1863,6 +1925,9 @@ def fetch_cnyes_news(limit: int = 60) -> List[Dict]:
                 pub_dt = datetime.fromtimestamp(pub_ts)
                 if datetime.now() - pub_dt > timedelta(hours=24):
                     continue
+                if item.get("title", "") in seen_titles:
+                    continue
+                seen_titles.add(item.get("title", ""))
                 news.append({
                     "title":   item.get("title", ""),
                     "summary": (item.get("summary") or "")[:120],
@@ -1889,16 +1954,47 @@ def fetch_moneydj_news() -> List[Dict]:
     return news
 
 # Exchange mapping: stocks on OTC (櫃買) vs TSE (上市)
+def _tw_tick(price: float) -> float:
+    """台股升降單位（依價位）。"""
+    if price < 10:     return 0.01
+    if price < 50:     return 0.05
+    if price < 100:    return 0.10
+    if price < 500:    return 0.50
+    if price < 1000:   return 1.00
+    return 5.00
+
+
 def _tw_limit_up(prev: float) -> float:
-    """Taiwan ±10% limit, rounded to correct tick size."""
-    price = prev * 1.10
-    if price < 10:     tick = 0.01
-    elif price < 50:   tick = 0.05
-    elif price < 100:  tick = 0.10
-    elif price < 500:  tick = 0.50
-    elif price < 1000: tick = 1.00
-    else:              tick = 5.00
-    return round(price / tick) * tick
+    """漲停價：昨收 ×1.1 向下取到升降單位（2330→2560，不可超過 10%）。"""
+    raw = prev * 1.10
+    tick = _tw_tick(raw)
+    return round(np.floor(raw / tick + 1e-9) * tick, 2)
+
+
+def _tw_limit_down(prev: float) -> float:
+    """跌停價：昨收 ×0.9 向上取到升降單位（2330→2100）。"""
+    raw = prev * 0.90
+    tick = _tw_tick(raw)
+    return round(np.ceil(raw / tick - 1e-9) * tick, 2)
+
+
+def _strip_suffix(ticker: str) -> str:
+    """2330.TW / 6488.TWO → 2330 / 6488（不能用 .replace('.TW','')，.TWO 會剩下 'O'）。"""
+    return ticker.split(".")[0]
+
+
+def _mis_float(v) -> Optional[float]:
+    try:
+        x = float(v)
+        return x if x > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _mis_first(s) -> Optional[float]:
+    """MIS 五檔字串 '2305.0000_2300.0000_' 的第一檔；'-' 或空字串回傳 None。"""
+    return _mis_float(str(s or "").split("_")[0])
+
 
 def _parse_ts(ts) -> str:
     """Convert a pandas Timestamp to Taipei HH:MM string."""
@@ -1940,8 +2036,15 @@ def _fetch_live_twse(tickers: List[str]) -> Dict[str, Dict]:
     if not tickers:
         return result
 
+    # MIS 一次查太多檔會整批回空（149 檔實測回 0 筆）→ 每批 40 檔（tse_ + otc_ 共 80 個代碼）
+    if len(tickers) > 40:
+        for i in range(0, len(tickers), 40):
+            result.update(_fetch_live_twse(tickers[i:i + 40]))
+            time.sleep(0.4)   # MIS 約限 3 次/5 秒
+        return result
+
     session = _get_twse_session()
-    codes   = [t.replace(".TW", "").replace(".TWO", "").lower() for t in tickers]
+    codes   = [_strip_suffix(t).lower() for t in tickers]
     # 同時送出 tse_ 和 otc_ 前綴，API 自動忽略無效的那個
     ex_ch   = "|".join(f"tse_{c}.tw|otc_{c}.tw" for c in codes)
     url     = (f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
@@ -1964,45 +2067,25 @@ def _fetch_live_twse(tickers: List[str]) -> Dict[str, Dict]:
             if prev == 0:
                 continue
 
-            # ── 1. 成交價 z（有撮合就用） ─────────────────────────────────────
-            price = None
-            z = item.get("z", "-")
-            if z and z not in ("-", "0", ""):
-                price = float(z)
-
-            # ── 2. z=- 時改用買賣掛單中間價（bid/ask midpoint）──────────────
+            # ── 成交價：MIS 的 z 大部分時間是 "-"（只有剛好撮合的那一刻才有值）
+            #    → 依序退回 pz（上一筆成交）→ 最佳買賣中間價 → 單邊掛單（漲跌停鎖死時只有一邊）→ 開盤價
+            price = _mis_float(item.get("z")) or _mis_float(item.get("pz"))
+            best_ask, best_bid = _mis_first(item.get("a")), _mis_first(item.get("b"))
+            if price is None and best_ask and best_bid:
+                price = (best_ask + best_bid) / 2
             if price is None:
-                a_str = item.get("a", "")   # 賣：2315_2320_...
-                b_str = item.get("b", "")   # 買：2310_2305_...
-                try:
-                    best_ask = float(a_str.split("_")[0]) if a_str else None
-                    best_bid = float(b_str.split("_")[0]) if b_str else None
-                    if best_ask and best_bid:
-                        price = (best_ask + best_bid) / 2
-                    elif best_bid:
-                        price = best_bid
-                    elif best_ask:
-                        price = best_ask
-                except (ValueError, IndexError):
-                    pass
-
-            # ── 3. 再退：今日最高 / 開盤 ─────────────────────────────────────
-            if price is None:
-                for fld in ("h", "o"):
-                    val = item.get(fld, "-")
-                    if val and val not in ("-", "0", ""):
-                        price = float(val)
-                        break
+                price = best_bid or best_ask or _mis_float(item.get("o"))
 
             if price is None:
                 continue
 
             chg      = price - prev
             chg_pct  = (chg / prev * 100) if prev > 0 else 0
-            vol_raw  = item.get("v", "0").replace(",", "")
-            volume   = int(float(vol_raw)) // 1000 if vol_raw and vol_raw not in ("-", "") else 0
-            u_str    = item.get("u", "-")
-            limit_up = float(u_str) if u_str and u_str not in ("-", "0", "") else _tw_limit_up(prev)
+            # MIS 的 v 是當日累積「張」，不是股（原本 //1000 會把 17,272 張算成 17）
+            vol_raw  = str(item.get("v") or "0").replace(",", "")
+            volume   = int(float(vol_raw)) if vol_raw not in ("-", "") else 0
+            limit_up   = _mis_float(item.get("u")) or _tw_limit_up(prev)
+            limit_down = _mis_float(item.get("w")) or _tw_limit_down(prev)
             t_str    = item.get("t", "") or item.get("%", "--:--")
 
             result[ticker] = {
@@ -2012,7 +2095,7 @@ def _fetch_live_twse(tickers: List[str]) -> Dict[str, Dict]:
                 "chg_pct":    round(chg_pct, 2),
                 "volume":     volume,
                 "limit_up":   limit_up,
-                "limit_down": round(prev * 0.90, 0),
+                "limit_down": limit_down,
                 "time":       t_str[:5] if len(t_str) >= 5 else t_str,
                 "live":       True,
             }
@@ -2057,7 +2140,9 @@ def _fetch_live_yf(tickers: List[str]) -> Dict[str, Dict]:
                 prev_close = last_price
             chg     = last_price - prev_close
             chg_pct = (chg / prev_close * 100) if prev_close > 0 else 0
-            vol_sum = int(vol_s.iloc[-30:].sum() / 1000) if not vol_s.empty else 0
+            # 今日累積張數（原本加總最後 30 根，是「最近 30 分鐘」不是今日成交量）
+            _today_vol = vol_s[[x.date() == last_ts.date() for x in vol_s.index]] if hasattr(last_ts, "date") else vol_s
+            vol_sum = int(_today_vol.sum() / 1000) if not vol_s.empty else 0
             # 若最後一根 K 是今天的，就算「盤中延遲」也算 live
             from datetime import timezone as _tz, timedelta as _td
             _tw_now = datetime.now(_tz(_td(hours=8))).date()
@@ -2074,7 +2159,7 @@ def _fetch_live_yf(tickers: List[str]) -> Dict[str, Dict]:
                 "chg_pct":    chg_pct,
                 "volume":     vol_sum,
                 "limit_up":   _tw_limit_up(prev_close),
-                "limit_down": round(prev_close * 0.90, 0),
+                "limit_down": _tw_limit_down(prev_close),
                 "time":       _parse_ts(last_ts),
                 "live":       is_today,
             }
@@ -2095,6 +2180,11 @@ def fetch_live_prices(tickers: List[str]) -> Dict[str, Dict]:
     missing = [t for t in tickers if t not in result]
     if missing:
         result.update(_fetch_live_yf(missing))
+        # 上櫃股在 Yahoo 是 .TWO；存回原本的 .TW key
+        missing = [t for t in missing if t not in result and t.endswith(".TW")]
+        if missing:
+            two = _fetch_live_yf([t[:-3] + ".TWO" for t in missing])
+            result.update({t[:-1]: v for t, v in two.items()})
     return result
 
 def analyze_holding_sell(df: pd.DataFrame) -> Dict:
@@ -2183,27 +2273,14 @@ def analyze_holding_sell(df: pd.DataFrame) -> Dict:
     }
 
 def fetch_twse_foreign_buying(date_str: Optional[str] = None) -> Dict[str, float]:
-    """抓取外資買超資料（千張）"""
-    if not date_str:
-        from datetime import timezone, timedelta
-        date_str = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y%m%d")
-    url = f"https://www.twse.com.tw/rwd/zh/fund/TWT53U?response=json&date={date_str}"
-    result = {}
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        data = r.json()
-        rows = data.get("data", [])
-        for row in rows:
-            if len(row) >= 5:
-                code = row[0].strip()
-                try:
-                    net = float(row[4].replace(",", "").replace("+", ""))
-                    result[code + ".TW"] = net / 1000
-                except (ValueError, IndexError):
-                    pass
-    except Exception:
-        pass
-    return result
+    """外資買賣超（張），最新一個有資料的交易日（當天資料約 15:00 後才公布）。"""
+    if date_str:
+        data = fetch_insti_day(datetime.strptime(date_str, "%Y%m%d"))
+    else:
+        rec = fetch_recent_insti(1)
+        data = rec[0][1] if rec else {}
+    return {t: v["foreign"] for t, v in data.items()}
+
 
 def fetch_twse_market_summary() -> Dict:
     """抓取大盤概況"""
@@ -2228,51 +2305,13 @@ def fetch_twse_market_summary() -> Dict:
 
 def fetch_twse_three_investors(date_str: Optional[str] = None) -> Dict[str, Dict]:
     """
-    三大法人買賣超（外資 + 投信 + 自營）— TWSE T86 API
-    台灣短線預測力：投信連買 > 外資連買 > 自營；三大法人同買 = 最強機構共識
-
-    T86 欄位（0-indexed）:
-      0: 代號  1: 名稱
-      2-4: 外陸資 (買/賣/淨)
-      5-7: 投信   (買/賣/淨)
-      8-10: 自營(自行) (買/賣/淨)
-      11-13: 自營(避險)(買/賣/淨)
-      14: 三大法人合計淨買
-
-    回傳 {ticker: {"trust": float, "dealer": float, "total": float}} (千張)
+    三大法人買賣超，最新一個有資料的交易日。
+    回傳 {ticker: {"foreign", "trust", "dealer", "total"}}（單位：張）。
     """
-    if not date_str:
-        date_str = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y%m%d")
-    url = (f"https://www.twse.com.tw/rwd/zh/fund/T86"
-           f"?response=json&date={date_str}&selectType=ALLBUT0999")
-    result: Dict[str, Dict] = {}
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        data = r.json()
-        rows = data.get("data", [])
-        for row in rows:
-            if len(row) < 15:
-                continue
-            code = row[0].strip()
-            if not code:
-                continue
-            def _to_k(val: str) -> float:
-                try:
-                    return float(str(val).replace(",", "").replace("+", "")) / 1000
-                except (ValueError, TypeError):
-                    return 0.0
-            trust_net  = _to_k(row[7])    # 投信淨買超（千張）
-            dealer_own = _to_k(row[10])   # 自營(自行)淨買
-            dealer_hdg = _to_k(row[13])   # 自營(避險)淨買
-            total_net  = _to_k(row[14])   # 三大法人合計
-            result[code + ".TW"] = {
-                "trust":  trust_net,
-                "dealer": dealer_own + dealer_hdg,
-                "total":  total_net,
-            }
-    except Exception:
-        pass
-    return result
+    if date_str:
+        return fetch_insti_day(datetime.strptime(date_str, "%Y%m%d"))
+    rec = fetch_recent_insti(1)
+    return rec[0][1] if rec else {}
 
 
 def calc_three_investors_bonus(trust_net: float, dealer_net: float, foreign_net: float) -> Dict:
@@ -2285,7 +2324,7 @@ def calc_three_investors_bonus(trust_net: float, dealer_net: float, foreign_net:
     • 三大同賣：機構集體出清             → -6
     • 外資 + 投信同賣：機構共識看空      → -4
 
-    trust_net / dealer_net / foreign_net 單位：千張（正=買超，負=賣超）
+    trust_net / dealer_net / foreign_net 單位：張（正=買超，負=賣超）
     """
     bonus = 0
     labels: List[str] = []
@@ -2348,6 +2387,16 @@ def fetch_taiex_prices(period: str = "1y") -> Optional[pd.Series]:
 #  催化劑分析：從新聞中找出觸發因素與受益股
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# 標題含這些字 = 壞消息；不能因為「被新聞點名」就替股票加分
+_NEGATIVE_NEWS_KW = ("下修", "衰退", "虧損", "砍單", "跌停", "重挫", "大跌", "暴跌", "下殺", "賣超", "利空",
+                     "裁員", "違約", "掏空", "遭罰", "停工", "減產", "年減", "月減", "轉虧", "失守", "調降",
+                     "降評", "下滑", "延後", "訴訟", "跌破")
+
+
+def _is_negative_news(title: str) -> bool:
+    return any(k in title for k in _NEGATIVE_NEWS_KW)
+
+
 def analyze_catalysts(news_list: List[Dict]) -> Tuple[Dict[str, int], List[str]]:
     """
     回傳:
@@ -2382,8 +2431,9 @@ def analyze_catalysts(news_list: List[Dict]) -> Tuple[Dict[str, int], List[str]]
         for catalyst in triggered:
             for kw in CATALYST_MAP[catalyst]:
                 if kw.lower() in combined.lower():
-                    if news["title"] not in key_headlines:
-                        key_headlines.append(f"[{news['time']}][{news['source']}] {news['title'][:60]}")
+                    _hl = f"[{news['time']}][{news['source']}] {news['title'][:60]}"
+                    if _hl not in key_headlines:   # 原本拿原始標題比對格式化字串，同一則會重複出現
+                        key_headlines.append(_hl)
                     break
 
     # ── 2. 主題加分：依新聞篇數縮放，單催化劑上限15分 ─────────────────────────
@@ -2408,8 +2458,9 @@ def analyze_catalysts(news_list: List[Dict]) -> Tuple[Dict[str, int], List[str]]
         en   = info.get("en", "")
         direct = sum(
             1 for n in news_list
-            if (name and name in n["title"])
-            or (en and len(en) > 3 and en.lower() in n["title"].lower())
+            if ((name and name in n["title"])
+                or (en and len(en) > 3 and en.lower() in n["title"].lower()))
+            and not _is_negative_news(n["title"])
         )
         if direct > 0:
             direct_bonus = min(15, direct * 4)
@@ -2424,7 +2475,7 @@ def analyze_catalysts(news_list: List[Dict]) -> Tuple[Dict[str, int], List[str]]
         for n in news_list:
             combined = (n["title"] + " " + n["summary"]).lower()
             name_hit = (name and name in combined) or (en and len(en) > 3 and en.lower() in combined)
-            if not name_hit:
+            if not name_hit or _is_negative_news(n["title"]):
                 continue
             for kw in order_high_kw:
                 if kw.lower() in combined:
@@ -3094,9 +3145,10 @@ def score_stock(ticker: str, df: pd.DataFrame, catalyst_bonus: int, foreign_net:
     wk_info = calc_weekly_trend(df)
 
     macro_adj  = max(-10, min(10, int(macro_bonus)))
-    total = min(100, max(0, vol_score + mom_score + tech + kbar_score + cat_score
-                           + fi_bonus + streak_bonus + trust_bonus + bo_score + macro_adj
-                           + margin_score + wk_info["bonus"]))
+    raw_total = (vol_score + mom_score + tech + kbar_score + cat_score
+                 + fi_bonus + streak_bonus + trust_bonus + bo_score + macro_adj
+                 + margin_score + wk_info["bonus"])
+    total = min(100, max(0, raw_total))
 
     last_price = float(close.iloc[-1])
     atr        = calc_atr(df)
@@ -3135,7 +3187,7 @@ def score_stock(ticker: str, df: pd.DataFrame, catalyst_bonus: int, foreign_net:
     trade_plan = build_trading_plan(_partial, sr_levels)
 
     _tinfo     = TECH_UNIVERSE.get(ticker, {})
-    _base_code = ticker.replace(".TW", "").replace(".TWO", "")
+    _base_code = _strip_suffix(ticker)
     return {
         "ticker":      ticker,
         "name":        _tinfo.get("name") or _TW_STOCK_NAMES.get(ticker) or _base_code,
@@ -3143,6 +3195,7 @@ def score_stock(ticker: str, df: pd.DataFrame, catalyst_bonus: int, foreign_net:
         "sector":      _tinfo.get("sector", ""),
         "supply":      _tinfo.get("supply", []),
         "score":        total,
+        "raw_score":    raw_total,   # 未封頂，只用於 100 分同分時的排序
         "vol_score":     vol_score,
         "mom_score":     mom_score,
         "tech_score":    tech,
@@ -3281,7 +3334,11 @@ def _parse_quarterly_stmt(stmt) -> Dict:
                 return s if len(s) >= 2 else None
             return None
 
-        rev = _row("Total Revenue") or _row("Operating Revenue")
+        # 不能寫 _row(a) or _row(b)：Series 做布林判斷會丟 ValueError，被外層 except 吞掉，
+        # 結果所有股票的季營收/毛利趨勢都是空的
+        rev = _row("Total Revenue")
+        if rev is None:
+            rev = _row("Operating Revenue")
         gp  = _row("Gross Profit")
         ni  = _row("Net Income")
 
@@ -3330,7 +3387,7 @@ def _parse_quarterly_stmt(stmt) -> Dict:
     return result
 
 
-def fetch_yf_fundamentals_batch(tickers: List[str], max_workers: int = 6) -> Dict:
+def fetch_yf_fundamentals_batch(tickers: List[str], max_workers: int = 6, _is_retry: bool = False) -> Dict:
     """
     Parallel yfinance .info fetch for fundamental data.
     Returns {ticker: {"rev_growth": float|None, "earn_growth": float|None,
@@ -3350,9 +3407,18 @@ def fetch_yf_fundamentals_batch(tickers: List[str], max_workers: int = 6) -> Dic
     def _one(sym: str):
         try:
             buf = io.StringIO()
+            info, t = {}, None
+            # 上櫃股在 Yahoo 是 .TWO；.TW 查不到（404）時改試，否則 27 檔上櫃股永遠沒有基本面
+            candidates = [sym, sym[:-3] + ".TWO"] if sym.endswith(".TW") else [sym]
             with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                t = yf.Ticker(sym)
-                info = t.info
+                for _s in candidates:
+                    try:
+                        t = yf.Ticker(_s)
+                        info = t.info or {}
+                    except Exception:
+                        info = {}
+                    if info.get("revenueGrowth") is not None or info.get("trailingEps") is not None:
+                        break
             rg = info.get("revenueGrowth")
             eg = info.get("earningsGrowth")
             pm = info.get("profitMargins")
@@ -3402,62 +3468,91 @@ def fetch_yf_fundamentals_batch(tickers: List[str], max_workers: int = 6) -> Dic
                     result[sym] = d
             except Exception:
                 pass
+    # Yahoo 限流時會一次失敗一批，而結果會被快取 12 小時 → 失敗的放慢速度再試一次
+    retry = [t for t in tickers if not result.get(t) or result[t].get("yf_error")]
+    if retry and len(retry) < len(tickers) + 1 and not _is_retry:
+        time.sleep(3)
+        result.update({k: v for k, v in
+                       fetch_yf_fundamentals_batch(retry, max_workers=2, _is_retry=True).items() if v})
     return result
+
+
+def _revenue_row(yoy, mom, ytd, period) -> Optional[Dict]:
+    try:
+        return {"yoy": float(yoy), "mom": float(mom) if mom not in (None, "") else None,
+                "ytd_yoy": float(ytd) if ytd not in (None, "") else None, "period": str(period)}
+    except (ValueError, TypeError):
+        return None
+
+
+def _fetch_revenue_openapi() -> Dict[str, Dict]:
+    """官方 OpenAPI：只回傳最新一期，資料本身帶「資料年月」，不用自己猜月份。"""
+    out: Dict[str, Dict] = {}
+    for url in ("https://openapi.twse.com.tw/v1/opendata/t187ap05_L",
+                "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O"):
+        try:
+            for x in requests.get(url, headers=HEADERS, timeout=25).json():
+                row = _revenue_row(x.get("營業收入-去年同月增減(%)"), x.get("營業收入-上月比較增減(%)"),
+                                   x.get("累計營業收入-前期比較增減(%)"), x.get("資料年月", ""))
+                code = str(x.get("公司代號", "")).strip()
+                if row and code:
+                    out[code + ".TW"] = row
+        except Exception as e:
+            print(f"⚠️ 月營收 OpenAPI 失敗 {url}: {e}", file=sys.stderr)
+    return out
+
+
+def _fetch_revenue_mops(now: Optional[datetime] = None) -> Dict[str, Dict]:
+    """備援：MOPS 靜態頁（舊網域 mops.twse.com.tw 已 404，改 mopsov）。從上個月開始往回找到有資料的月份。"""
+    now = now or datetime.now(timezone(timedelta(hours=8)))
+    out: Dict[str, Dict] = {}
+    for market in ("sii", "otc"):
+        y, m = now.year, now.month
+        for _ in range(3):
+            m -= 1
+            if m == 0:
+                y, m = y - 1, 12
+            found = 0
+            try:
+                r = requests.get(f"https://mopsov.twse.com.tw/nas/t21/{market}/t21sc03_{y-1911}_{m}_0.html",
+                                 headers=HEADERS, timeout=20)
+                if r.status_code != 200:
+                    continue
+                r.encoding = "big5"
+                for row in BeautifulSoup(r.text, "lxml").find_all("tr"):
+                    cols = [c.get_text(strip=True).replace(",", "") for c in row.find_all("td")]
+                    if len(cols) < 10 or not (cols[0].isdigit() and len(cols[0]) == 4):
+                        continue
+                    rr = _revenue_row(cols[6], cols[5], cols[9], f"{y-1911}{m:02d}")
+                    if rr:
+                        out[cols[0] + ".TW"] = rr
+                        found += 1
+            except Exception as e:
+                print(f"⚠️ 月營收 MOPS 失敗 {market} {y}-{m}: {e}", file=sys.stderr)
+            if found >= 100:   # 當月上旬只有少數公司先公布，不算有效月份
+                break
+    return out
+
+
+def fetch_monthly_revenue() -> Dict[str, Dict]:
+    """官方月營收（上市 + 上櫃）：{ticker: {yoy, mom, ytd_yoy, period}}，% 為單位。"""
+    return _fetch_revenue_openapi() or _fetch_revenue_mops()
+
+
+def merge_monthly_revenue(fund_map: Dict) -> int:
+    """把官方月營收併入 fund_map（calc_fundamental_bonus 會優先採用）。回傳筆數。"""
+    rev = fetch_monthly_revenue()
+    for tk, row in rev.items():
+        d = fund_map.setdefault(tk, {})
+        d["monthly_rev_yoy"] = row["yoy"]
+        d["monthly_rev_ytd_yoy"] = row["ytd_yoy"]
+        d["monthly_rev_period"] = row["period"]
+    return len(rev)
 
 
 def fetch_twse_monthly_revenue() -> Dict[str, float]:
-    """
-    月營收年增率 from MOPS HTML (公開資訊觀測站)。
-    URL: https://mops.twse.com.tw/nas/t21/{market}/t21sc03_{ROC_YEAR}_{MONTH}_0.html
-    One request per market (sii/otc) gets ALL companies — far more efficient than per-ticker APIs.
-
-    Returns {ticker: yoy_pct}, e.g. {"2330.TW": 42.5, "2454.TW": 18.3}
-    Returns {} gracefully when MOPS is unreachable from cloud servers.
-
-    MOPS column layout (0-indexed):
-      0: 公司代號  1: 名稱  2: 當月營收  3: 上月  4: 去年同月
-      5: 月增%  6: 年增%  7: 累計  8: 去年累計  9: 累計年增%
-    """
-    from bs4 import BeautifulSoup
-    from datetime import timezone as _tz, timedelta as _td
-
-    tw_now = datetime.now(tz=_tz(_td(hours=8)))
-    # Revenue reports published by the 10th of each month; use prior month if < 10th
-    if tw_now.day < 10:
-        first_of_month = tw_now.replace(day=1)
-        target = (first_of_month - _td(days=1))
-    else:
-        target = tw_now
-
-    roc_year = target.year - 1911
-    month    = target.month
-    result: Dict[str, float] = {}
-
-    for market, suffix in (("sii", ".TW"), ("otc", ".TWO")):
-        url = (f"https://mops.twse.com.tw/nas/t21/{market}/"
-               f"t21sc03_{roc_year}_{month}_0.html")
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=15)
-            if r.status_code != 200:
-                continue
-            r.encoding = "big5"
-            soup = BeautifulSoup(r.text, "lxml")
-            for table in soup.find_all("table"):
-                for row in table.find_all("tr"):
-                    cols = row.find_all("td")
-                    if len(cols) < 7:
-                        continue
-                    code = cols[0].get_text(strip=True)
-                    if not code.isdigit() or len(code) != 4:
-                        continue
-                    yoy_raw = cols[6].get_text(strip=True).replace(",", "").replace("+", "")
-                    try:
-                        result[code + suffix] = float(yoy_raw)
-                    except (ValueError, TypeError):
-                        pass
-        except Exception:
-            pass
-    return result
+    """相容舊呼叫：{ticker: 單月年增%}。"""
+    return {t: r["yoy"] for t, r in fetch_monthly_revenue().items()}
 
 
 def fetch_tpex_monthly_revenue() -> Dict:
@@ -3537,9 +3632,27 @@ def fetch_twse_margin_balance() -> Dict[str, Dict]:
                     "short_margin_ratio":  short_margin_ratio,
                 }
             if result:
-                return result
+                break
         except Exception:
             continue
+    # 上櫃融資融券（官方 OpenAPI，最新一日）
+    try:
+        for x in requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance",
+                              headers=HEADERS, timeout=20).json():
+            code = str(x.get("SecuritiesCompanyCode", "")).strip()
+            if len(code) != 4 or not code.isdigit() or code.startswith("00"):
+                continue
+            m_today, m_prev = _n(x.get("MarginPurchaseBalance")), _n(x.get("MarginPurchaseBalancePreviousDay"))
+            s_today = _n(x.get("ShortSaleBalance"))
+            if m_today <= 0 and s_today <= 0:
+                continue
+            result[code + ".TW"] = {
+                "margin_bal": m_today, "margin_prev": m_prev, "short_bal": s_today,
+                "margin_chg_pct": round((m_today - m_prev) / m_prev * 100, 1) if m_prev > 0 else 0.0,
+                "short_margin_ratio": round(s_today / m_today * 100, 1) if m_today > 0 else 0.0,
+            }
+    except Exception as e:
+        print(f"⚠️ 上櫃融資券失敗: {e}", file=sys.stderr)
     return result
 
 
@@ -3778,8 +3891,15 @@ def calc_fundamental_bonus(ticker: str, fund_map: Dict, meeting_map: Dict) -> Di
     fund = fund_map.get(ticker, {})
     yf_error = fund.get("yf_error", False)
 
-    if fund and not yf_error:
+    # Yahoo 失敗時欄位都是 None，但官方月營收仍然有效 → 照常計分（原本整段跳過）
+    if fund:
         rg    = fund.get("rev_growth")
+        # 營收以官方累計年增為準：Yahoo 的 revenueGrowth 常與官方差很大
+        # （2026-11 實測 3661：Yahoo -16.5%，官方累計 +44.6%）
+        _rev_label = "\u71df\u6536\u5e74\u589e"
+        if fund.get("monthly_rev_ytd_yoy") is not None:
+            rg = fund["monthly_rev_ytd_yoy"] / 100
+            _rev_label = "\u7d2f\u8a08\u71df\u6536\u5e74\u589e"
         eg    = fund.get("earn_growth")
         pm    = fund.get("profit_margin")
         t_eps = fund.get("trailing_eps")
@@ -3790,15 +3910,15 @@ def calc_fundamental_bonus(ticker: str, fund_map: Dict, meeting_map: Dict) -> Di
         # -- Revenue YoY --
         if rg is not None:
             rev_yoy = rg * 100
-            if   rg >= 0.80: bonus += 15; labels.append(f"\u71df\u6536\u5e74\u589e +{rev_yoy:.0f}% \U0001f680")
-            elif rg >= 0.50: bonus += 12; labels.append(f"\u71df\u6536\u5e74\u589e +{rev_yoy:.0f}% \U0001f4c8")
-            elif rg >= 0.30: bonus +=  9; labels.append(f"\u71df\u6536\u5e74\u589e +{rev_yoy:.0f}%")
-            elif rg >= 0.15: bonus +=  6; labels.append(f"\u71df\u6536\u5e74\u589e +{rev_yoy:.0f}%")
-            elif rg >= 0.05: bonus +=  3; labels.append(f"\u71df\u6536\u5e74\u589e +{rev_yoy:.0f}%")
+            if   rg >= 0.80: bonus += 15; labels.append(f"{_rev_label} +{rev_yoy:.0f}% \U0001f680")
+            elif rg >= 0.50: bonus += 12; labels.append(f"{_rev_label} +{rev_yoy:.0f}% \U0001f4c8")
+            elif rg >= 0.30: bonus +=  9; labels.append(f"{_rev_label} +{rev_yoy:.0f}%")
+            elif rg >= 0.15: bonus +=  6; labels.append(f"{_rev_label} +{rev_yoy:.0f}%")
+            elif rg >= 0.05: bonus +=  3; labels.append(f"{_rev_label} +{rev_yoy:.0f}%")
             elif rg >= 0.00: bonus +=  1
             elif rg >= -0.10: bonus -= 3
             elif rg >= -0.20: bonus -= 6
-            else:             bonus -= 9; labels.append(f"\u71df\u6536\u5e74\u6e1b {rev_yoy:.0f}% \u26a0\ufe0f")
+            else:             bonus -= 9; labels.append(f"{_rev_label} {rev_yoy:.0f}% \u26a0\ufe0f")
 
         # -- Earnings YoY --
         if eg is not None:
@@ -3813,7 +3933,7 @@ def calc_fundamental_bonus(ticker: str, fund_map: Dict, meeting_map: Dict) -> Di
         # -- Profit margin --
         if pm is not None and pm >= 0.25:
             bonus += 3
-            labels.append(f"\u9ad8\u6bdb\u5229 {pm*100:.0f}%")
+            labels.append(f"\u9ad8\u6de8\u5229\u7387 {pm*100:.0f}%")   # profitMargins 是淨利率，不是毛利率
 
         # -- EPS --
         if t_eps is not None:
@@ -3881,7 +4001,7 @@ def calc_fundamental_bonus(ticker: str, fund_map: Dict, meeting_map: Dict) -> Di
             elif ni_yoy_q <= -0.20: bonus -= 4; labels.append(f"\u6de8\u5229\u5e74\u6e1b {earn_yoy:.0f}% \u26a0\ufe0f")
 
     # -- Shareholder meetings (API unavailable) --
-    code = ticker.replace(".TW", "").replace(".TWO", "")
+    code = _strip_suffix(ticker)
     days = meeting_map.get(code)
     if days is not None:
         if   days <= 14: bonus += 5; labels.append(f"\u80a1\u6771\u6703 {max(0,days)}\u65e5\u5f8c \U0001f5d3")

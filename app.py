@@ -193,6 +193,23 @@ def fetch_live_prices(tickers: list, daily_prices: dict = None) -> dict:
     results = {}
     daily_prices = daily_prices or {}
 
+    # 先用證交所 MIS（即時）；雲端若被擋或沒拿到才退回 Yahoo（延遲約 20 分鐘）
+    try:
+        from widget import _fetch_live_twse
+        for _t, _q in _fetch_live_twse(tickers).items():
+            results[_t] = {
+                "price": _q["price"], "prev_close": _q["prev"],
+                "change": round(_q["chg"], 2), "change_pct": _q["chg_pct"],
+                "open": None, "high": None, "low": None,
+                "volume": _q["volume"] * 1000,   # MIS 單位是張；這裡統一成股
+                "time": _q["time"],
+                "name": TECH_UNIVERSE.get(_t, {}).get("name", _t.replace(".TW", "")),
+                "source": "mis",
+            }
+    except Exception:
+        pass
+    tickers = [t for t in tickers if t not in results]
+
     chunk_size = 20
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i+chunk_size]
@@ -215,12 +232,14 @@ def fetch_live_prices(tickers: list, daily_prices: dict = None) -> dict:
                     bar_time   = df_t.index[-1]
                     bar_time_s = bar_time.tz_convert(TST).strftime("%H:%M") if hasattr(bar_time, "tz_convert") else str(bar_time)[-8:-3]
 
-                    # Prev close from daily cache (index -2 = yesterday)
+                    # 昨收：取日 K 中「今天以前」的最後一根。不能用 iloc[-2]：
+                    # 日 K 快取若還沒有今天這根，iloc[-2] 會變成前天，漲跌幅就錯了
                     d_df = daily_prices.get(ticker)
+                    prev_close = open_price
                     if d_df is not None and len(d_df) >= 2:
-                        prev_close = float(d_df["Close"].iloc[-2])
-                    else:
-                        prev_close = open_price
+                        _before = d_df[d_df.index.date < datetime.now(tz=TST).date()]
+                        if len(_before):
+                            prev_close = float(_before["Close"].iloc[-1])
 
                     change     = round(price - prev_close, 2)
                     change_pct = round(change / prev_close * 100, 2) if prev_close > 0 else 0
@@ -236,6 +255,7 @@ def fetch_live_prices(tickers: list, daily_prices: dict = None) -> dict:
                         "volume":     vol_day,
                         "time":       bar_time_s,
                         "name":       TECH_UNIVERSE.get(ticker, {}).get("name", ticker.replace(".TW", "")),
+                        "source":     "yfinance",
                     }
                 except Exception:
                     pass
@@ -444,7 +464,13 @@ elif "波段掃描" in view:
             chg        = d.get("change", 0)
             chg_pct    = d.get("change_pct", 0)
             bar_time   = d.get("time", "—")
-            freshness  = "🟢" if _is_market_open() else "🔴"
+            # Yahoo 5 分 K 實測落後約 20–25 分鐘；只有證交所 MIS 的報價才算即時
+            if not _is_market_open():
+                freshness = "🔴"
+            elif d.get("source") == "mis":
+                freshness = "🟢"
+            else:
+                freshness = "🟡 延遲約20分"
             p_col      = "#ef5350" if chg >= 0 else "#00c853"
 
             dist = round((live_price - last) / last * 100, 2) if last > 0 else 0
