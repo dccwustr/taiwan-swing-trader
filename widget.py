@@ -300,6 +300,10 @@ TECH_UNIVERSE: Dict[str, Dict] = {
 }
 
 # ── 新聞催化劑關鍵字（科技 + 多元產業）──────────────────────────────────────
+# 不進精選的股票：仍留在 TECH_UNIVERSE 供長期觀察頁抓價。
+# 2758 路易莎不在官方上市/上櫃清單，可能無法用一般零股方式買進（2026-11 查核）。
+PICKS_EXCLUDE = {"2758.TW"}
+
 CATALYST_MAP = {
     # 科技主題
     "NVIDIA": ["NVIDIA","輝達","Blackwell","GB200","GB300","H100","H200","NVL72","B200","Hopper","HGX","DGX"],
