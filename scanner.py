@@ -46,6 +46,25 @@ SWING_SETUP_TYPES = {
 }
 
 
+def replay_setup_history(df: pd.DataFrame, ticker: str, setup_type: str,
+                         min_bars: int = 65, horizon: int = 20) -> dict:
+    """
+    同訊號回放：逐日只用當天以前的資料跑真正的掃描規則，
+    觸發時以該次的停損與目標往後走，不重疊計算。尚未分出結果的不計入。
+    """
+    from trade_check import walk_forward, summarize_trades
+    results, i = [], min_bars
+    while i < len(df) - 1:
+        hit = [s for s in scan_swing_setups({ticker: df.iloc[:i + 1]}) if s["type"] == setup_type]
+        r = walk_forward(df, i, hit[0]["stop"], hit[0]["target"], horizon) if hit else None
+        if r is None:
+            i += 1
+            continue
+        results.append(r)
+        i = r["exit_idx"] + 1
+    return summarize_trades(results)
+
+
 def _swing_score(setup: dict) -> int:
     """Composite score for ranking setups (higher = better)."""
     s = 0
@@ -140,7 +159,7 @@ def scan_swing_setups(prices: Dict[str, pd.DataFrame],
                     "rsi": round(rsi, 1), "vr": round(vr, 2),
                     "stage": stage, "kbar": kbar,
                     "sr": sr, "atr": round(atr, 2),
-                    "rr": pos["rr"], "shares": pos["shares_1k"],
+                    "rr": pos["rr"], "shares": pos["shares"],
                     "notional": pos["notional"], "risk_nwd": pos["risk_nwd"],
                     "reasons": [f"52週突破({'確認' if bo['type']=='confirmed' else '接近'})",
                                 f"量比 {vr:.1f}x", f"Stage 2 多頭排列"],
@@ -165,7 +184,7 @@ def scan_swing_setups(prices: Dict[str, pd.DataFrame],
                     "rsi": round(rsi, 1), "vr": round(vr, 2),
                     "stage": stage, "kbar": kbar,
                     "sr": sr, "atr": round(atr, 2),
-                    "rr": pos["rr"], "shares": pos["shares_1k"],
+                    "rr": pos["rr"], "shares": pos["shares"],
                     "notional": pos["notional"], "risk_nwd": pos["risk_nwd"],
                     "reasons": [f"Stage 2 回測 MA20（NT${ma20}）",
                                 f"RSI {rsi:.0f} 冷卻至甜蜜區",
@@ -190,7 +209,7 @@ def scan_swing_setups(prices: Dict[str, pd.DataFrame],
                     "rsi": round(rsi, 1), "vr": round(vr, 2),
                     "stage": stage, "kbar": kbar,
                     "sr": sr, "atr": round(atr, 2),
-                    "rr": pos["rr"], "shares": pos["shares_1k"],
+                    "rr": pos["rr"], "shares": pos["shares"],
                     "notional": pos["notional"], "risk_nwd": pos["risk_nwd"],
                     "reasons": ["布林帶壓縮 → 即將爆發",
                                 f"量比 {vr:.1f}x 放大確認",
@@ -216,7 +235,7 @@ def scan_swing_setups(prices: Dict[str, pd.DataFrame],
                     "rsi": round(rsi, 1), "vr": round(vr, 2),
                     "stage": stage, "kbar": kbar,
                     "sr": sr, "atr": round(atr, 2),
-                    "rr": pos["rr"], "shares": pos["shares_1k"],
+                    "rr": pos["rr"], "shares": pos["shares"],
                     "notional": pos["notional"], "risk_nwd": pos["risk_nwd"],
                     "reasons": [f"KD 超賣黃金交叉（K={kd.get('K',0):.0f}）",
                                 f"RSI {rsi:.0f} 超賣",
@@ -261,7 +280,7 @@ def scan_daytrade_setups(prices: Dict[str, pd.DataFrame],
     當沖機會掃描：
     1. Gap & Go — 開盤跳空 > 2% + 量放大，追多
     2. Gap Reversal — 跳空低開後回彈（強支撐接力）
-    台灣當沖注意：需開通當沖帳戶；稅率 0.3%（vs 一般 0.15%）
+    台灣當沖注意：需開通當沖帳戶；證交稅 0.15%（一般股票 0.3%；減半優惠至 2027-12-31）
     """
     daytrades = []
 
@@ -386,8 +405,8 @@ def simulate_monthly_return(capital: int = 500_000,
             ret = (avg_win_pct if win else -avg_loss_pct)
             ret += np.random.normal(0, 0.02)   # ±2% noise
             pnl += position_size * ret
-        # Transaction costs: 0.285% per round trip × trades
-        costs = trades_per_month * position_size * 0.00285
+        # Transaction costs per round trip: 0.285% fees + 0.3% securities tax = 0.585%
+        costs = trades_per_month * position_size * 0.00585
         monthly_pnls.append(pnl - costs)
 
     arr = np.array(monthly_pnls)

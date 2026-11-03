@@ -33,7 +33,7 @@ if _HERE not in sys.path:
 try:
     from scanner import (
         scan_swing_setups, scan_daytrade_setups,
-        simulate_monthly_return, SWING_SETUP_TYPES,
+        simulate_monthly_return, SWING_SETUP_TYPES, replay_setup_history,
     )
     from risk import (
         calc_position_size, calc_target_prices,
@@ -47,6 +47,7 @@ try:
         analyze_portfolio_risk, TECH_UNIVERSE,
     )
     from dip_watch import market_drop
+    from trade_check import check_trade, simulate_odds, history_same_distance, render_html
 except Exception as _e:
     st.error(f"載入失敗：{_e}")
     import traceback; st.code(traceback.format_exc())
@@ -136,6 +137,25 @@ def load_lenses() -> dict:
         return r.json().get("tickers", {}) if r.ok else {}
     except Exception:
         return {}
+
+def _trade_check_html(s: dict, df) -> str:
+    """交易前檢查：預算與虧損上限沿用本 App 的資金規則。只顯示，不影響設置分數。"""
+    max_loss = CAPITAL * RISK_PER_TRADE_PCT
+    try:
+        return render_html(
+            check_trade(s["last"], s["stop"], s["target"], CAPITAL * MAX_NOTIONAL_PCT, max_loss),
+            simulate_odds(df, s["last"], s["stop"], s["target"]),
+            history_same_distance(df, s["last"], s["stop"], s["target"]),
+            max_loss=max_loss,
+        )
+    except Exception:
+        return '<div style="font-size:11px;color:#888;margin:6px 0">🛡 交易前檢查暫時無法計算</div>'
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _setup_history(ticker: str, setup_type: str) -> dict:
+    """同訊號回放，用兩年日 K。按下按鈕才跑，避免拖慢掃描頁。"""
+    df = fetch_prices_batch([ticker], period="2y").get(ticker)
+    return replay_setup_history(df, ticker, setup_type) if df is not None else {"n": 0}
 
 def _epoch() -> str:
     n = datetime.now(tz=TST)
@@ -350,7 +370,7 @@ if "儀表板" in view:
         '<div class="warn-box">'
         '⚠️ <b>風控提醒</b>：每筆最大虧損 NT$10,000（資本2%）。'
         '日虧損達 NT$20,000 立即停手。月虧損達 NT$75,000 全面檢討策略。'
-        ' 當沖需開通「當沖帳戶」，稅率 0.3%（一般 0.15%）。'
+        ' 當沖需開通「當沖帳戶」，證交稅 0.15%（一般股票 0.3%；減半優惠至 2027 年底）。'
         ' 本 App 為訊號工具，不保證獲利，請自行判斷風險。'
         '</div>', unsafe_allow_html=True)
 
@@ -496,12 +516,20 @@ elif "波段掃描" in view:
                 s["rr"], s["shares"], s["notional"], s["risk_nwd"],
                 s.get("reasons", []) + _extra_lines(s), sr, setup_label, setup_color, rr_cls
             )
+            st.markdown(_trade_check_html(s, prices.get(s["ticker"])), unsafe_allow_html=True)
+            with st.expander(f"📜 {s['ticker'].replace('.TW','')} 同訊號歷史（點擊展開）", expanded=False):
+                if st.button("回放近兩年（需數秒）", key=f"hist_{s['ticker']}_{s['type']}"):
+                    _h = _setup_history(s["ticker"], s["type"])
+                    if _h["n"] > 0:
+                        st.markdown(render_html(hist=_h, hist_label="同訊號歷史"), unsafe_allow_html=True)
+                    else:
+                        st.info("近兩年這檔沒有觸發過同一訊號，或資料抓取失敗。")
             with st.expander(f"📝 開倉 {s['ticker'].replace('.TW','')}（點擊展開）", expanded=False):
                 _e = st.number_input("實際進場價", value=s["last"], step=0.1, key=f"e_{s['ticker']}")
                 _s = st.number_input("止損價", value=s["stop"], step=0.1, key=f"s_{s['ticker']}")
                 _t = st.number_input("目標價", value=s["target"], step=0.1, key=f"t_{s['ticker']}")
-                _pos = calc_position_size(_e, _s, CAPITAL)
-                st.caption(f"建議 {_pos['shares']:,} 股 ({_pos['lots']} 張)　投入 NT${_pos['notional']:,}　風險 NT${_pos['risk_nwd']:,}")
+                _pos = calc_position_size(_e, _s, CAPITAL, lot_size=1)
+                st.caption(f"建議 {_pos['shares']:,} 股（零股）　投入 NT${_pos['notional']:,}　風險 NT${_pos['risk_nwd']:,}")
                 _note = st.text_input("備注", key=f"n_{s['ticker']}")
                 if st.button(f"✅ 開倉 {s['ticker'].replace('.TW','')}", key=f"open_{s['ticker']}"):
                     if not get_open_trades().__len__() >= MAX_POSITIONS:
@@ -520,13 +548,13 @@ elif "波段掃描" in view:
 # ─────────────────────────────────────────────────────────────────────────────
 elif "當沖" in view:
     st.markdown("## ⚡ 當沖機會掃描")
-    st.caption("基於前日收盤 + 今日開盤跳空識別。當沖需開通券商當沖帳戶；稅率 0.3%（非 0.15%）。")
+    st.caption("基於前日收盤 + 今日開盤跳空識別。當沖需開通券商當沖帳戶；證交稅 0.15%（一般股票 0.3%；減半優惠至 2027 年底）。")
 
     st.markdown(
         '<div class="warn-box">'
         '📋 <b>台灣當沖規則提醒</b>：<br>'
         '① 須向券商申請開通「當日沖銷」帳戶<br>'
-        '② 當沖交易稅 0.3%（是一般股票 0.15% 的 2 倍）<br>'
+        '② 當沖證交稅 0.15%（是一般股票 0.3% 的一半；減半優惠至 2027 年底）<br>'
         '③ 同日買進賣出自動抵扣，若未賣出需 T+2 交割<br>'
         '④ 每筆最大風險建議 1.5%（NT$7,500）而非 2%，因當沖標的波動更大'
         '</div>', unsafe_allow_html=True)
@@ -566,8 +594,8 @@ elif "當沖" in view:
             f'投入 NT${d["notional"]:,}　'
             f'最大風險 <span style="color:#ef9a9a">NT${d["risk_nwd"]:,}</span>'
             f'<br><span style="color:#888;font-size:11px">'
-            f'⚠️ 當沖稅成本：NT${round(d["notional"]*0.003)}'
-            f'（含來回券商手續費約 NT${round(d["notional"]*0.00285+d["notional"]*0.003)}）</span>'
+            f'⚠️ 當沖稅成本：NT${round(d["notional"]*0.0015)}'
+            f'（含來回券商手續費約 NT${round(d["notional"]*0.00285+d["notional"]*0.0015)}）</span>'
             f'</div>'
             f'</div>',
             unsafe_allow_html=True
@@ -745,7 +773,7 @@ elif "計算機" in view:
         target_in   = st.number_input("目標價 NT$", value=110.0, step=0.5)
 
     with pc2:
-        pos = calc_position_size(entry_in, stop_in, int(cap_input), risk_pct_in/100)
+        pos = calc_position_size(entry_in, stop_in, int(cap_input), risk_pct_in/100, lot_size=1)
         tgt = calc_target_prices(entry_in, stop_in)
         rr  = round((target_in - entry_in) / (entry_in - stop_in), 2) if (entry_in - stop_in) > 0 else 0
         rr_col = "#69f0ae" if rr >= 2.0 else ("#ffd54f" if rr >= 1.5 else "#ef5350")
@@ -753,7 +781,7 @@ elif "計算機" in view:
         st.markdown(
             f'<div class="metric-card">'
             f'<div class="metric-title">建議股數</div>'
-            f'<div class="metric-val">{pos["shares"]:,} 股　({pos["lots"]} 張)</div>'
+            f'<div class="metric-val">{pos["shares"]:,} 股（零股）</div>'
             f'<div style="margin-top:12px;font-size:13px">'
             f'<div>💰 投入金額：<b>NT${pos["notional"]:,}</b>'
             f'（占資本 {pos["notional"]/cap_input*100:.1f}%）</div>'
