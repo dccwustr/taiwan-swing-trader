@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-交易前檢查（台股、零股、波段）：勝算模擬、歷史回放、風險檢查、部位計算。
+交易前檢查（台股、波段）：勝算模擬、歷史回放、風險檢查、部位計算。
+部位用風險法：股數 = 單筆可承受虧損 ÷ 每股到停損的虧損，再受單一個股資金上限約束（2026-11-10 取消 NT$10,000 上限）。
 
 概念參考 Trader skill v2（github.com/Jakeschincariol/day-trader-skill，MIT），
 程式為台股日 K 重寫：不含當沖、不會下單。結果只供顯示，不影響任何選股分數。
@@ -16,8 +17,11 @@ TAX_RATE = 0.003        # 一般股票賣出證交稅（ETF 為 0.1%，這裡保
 LIMIT_PCT = 0.10        # 單日漲跌停
 MIN_BARS = 40           # 少於這個天數不模擬，樣本太少
 HORIZON_DAYS = 20       # 持有上限（交易日）
-DEFAULT_BUDGET = 10_000
-DEFAULT_MAX_LOSS = 500  # 單筆最大虧損（NT$），小資預設值，可由呼叫端覆寫
+DEFAULT_CAPITAL = 500_000     # 總資本（與波段 App risk.py 一致）
+DEFAULT_RISK_PCT = 0.02       # 每筆最多虧總資本 2%
+DEFAULT_MAX_POS_PCT = 0.30    # 單一個股最多 30% 資本
+DEFAULT_BUDGET = int(DEFAULT_CAPITAL * DEFAULT_MAX_POS_PCT)    # NT$150,000 單檔上限
+DEFAULT_MAX_LOSS = int(DEFAULT_CAPITAL * DEFAULT_RISK_PCT)     # NT$10,000 單筆最大虧損
 MIN_NET_RR = 1.0        # 扣成本後報酬風險比低於此值 → BLOCK
 GOOD_NET_RR = 1.5
 
@@ -136,9 +140,17 @@ def history_same_distance(df, entry: float, stop: float, target: float,
     return summarize_trades(results)
 
 
+def fmt_shares(n: int) -> str:
+    """1,350 → '1 張 350 股'；不足 1 張只寫股數。"""
+    lots, odd = divmod(int(n), 1000)
+    if lots and odd:
+        return f"{lots} 張 {odd} 股"
+    return f"{lots} 張" if lots else f"{odd} 股"
+
+
 def size_odd_lot(entry: float, stop: float, budget: float = DEFAULT_BUDGET,
                  max_loss: float = DEFAULT_MAX_LOSS) -> dict:
-    """零股股數：同時受預算與單筆最大虧損限制，成本計入手續費與證交稅。"""
+    """風險法股數：同時受單檔資金上限與單筆最大虧損限制，成本計入手續費與證交稅。"""
     buy_cost = entry * (1 + FEE_RATE)
     loss_each = buy_cost - stop * (1 - FEE_RATE - TAX_RATE)
     by_budget = int(budget // buy_cost)
@@ -189,12 +201,12 @@ def render_html(check: Optional[dict] = None, odds: Optional[dict] = None, hist:
         col = "#69f0ae" if ok else "#ef5350"
         note = "；".join(check["reasons"] + check["warnings"])
         size = check["size"]
-        size_txt = (f'{size["shares"]:,} 股（約 NT${size["cost"]:,}，到停損約虧 NT${size["loss_at_stop"]:,}）'
+        size_txt = (f'{fmt_shares(size["shares"])}（約 NT${size["cost"]:,}，到停損約虧 NT${size["loss_at_stop"]:,}）'
                     if size["shares"] > 0 else "不建議建倉")
         parts.append(
             f'<div><b style="color:{col}">🛡 風險檢查 {check["verdict"]}</b>'
             + (f'　<span style="color:#ccc">{note}</span>' if note else "") + '</div>'
-            f'<div style="color:#ccc">🧮 單筆虧損上限 NT${max_loss:,.0f} 的零股股數：{size_txt}</div>'
+            f'<div style="color:#ccc">🧮 建議部位（單筆虧損上限 NT${max_loss:,.0f}）：{size_txt}</div>'
         )
     if odds is not None:
         vcol = {"偏有利": "#69f0ae", "偏不利": "#ef5350"}.get(odds["verdict"], "#ffd54f")

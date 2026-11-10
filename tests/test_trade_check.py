@@ -26,14 +26,20 @@ class Risk(unittest.TestCase):
         self.assertEqual(tc.check_trade(100, 101, 110)["verdict"], "BLOCK")
         self.assertEqual(tc.check_trade(100, 95, 99)["verdict"], "BLOCK")
     def test_unaffordable(self):
-        c = tc.check_trade(20000, 19000, 23000)
+        c = tc.check_trade(20000, 19000, 23000, budget=10000)
         self.assertEqual(c["verdict"], "BLOCK")
         self.assertEqual(c["size"]["shares"], 0)
     def test_loss_cap_blocks_one_share(self):
-        c = tc.check_trade(5000, 4000, 8000)
+        c = tc.check_trade(5000, 4000, 8000, max_loss=500)
         self.assertTrue(any("上限" in r for r in c["reasons"]))
 
 class Size(unittest.TestCase):
+    def test_risk_defaults(self):
+        s = tc.size_odd_lot(100, 90)          # NT$10,000 risk / ~10.4 per share, NT$150,000 cap
+        self.assertGreater(s["shares"], 900)
+        self.assertLessEqual(s["loss_at_stop"], tc.DEFAULT_MAX_LOSS)
+        self.assertLessEqual(s["cost"], tc.DEFAULT_BUDGET)
+        self.assertEqual(tc.fmt_shares(1350), "1 張 350 股")
     def test_limits(self):
         s = tc.size_odd_lot(100, 90, 10000, 500)
         self.assertEqual(s["by_budget"], 99)

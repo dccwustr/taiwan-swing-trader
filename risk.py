@@ -15,7 +15,7 @@ _TRADES_PATH = os.path.join(os.path.dirname(__file__), "data", "trades.json")
 
 CAPITAL = 500_000           # NT$ total capital
 RISK_PER_TRADE_PCT = 0.02   # 2% of capital max loss per trade → NT$10,000
-MAX_NOTIONAL_PCT   = 0.30   # 30% per position → NT$150,000
+MAX_NOTIONAL_PCT   = 1.00   # per-position cap = full capital NT$500,000 (Derek 2026-11-10); 2% risk rule still sizes the trade
 MAX_POSITIONS      = 4      # max concurrent open positions
 DAILY_LOSS_LIMIT   = 20_000 # NT$ — stop trading if exceeded
 MONTHLY_LOSS_LIMIT = 75_000 # NT$ — full review if exceeded

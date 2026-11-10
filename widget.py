@@ -1292,19 +1292,20 @@ def build_longterm_plan(sres: dict, sr: dict) -> dict:
         assess = (f"⚠️ 趨勢不明確——建議先觀察 1-2 個月。"
                   f"等均線多頭排列（MA5>MA20>MA60）才正式啟動建倉計劃。")
 
-    # ② 零股建倉策略
-    shares_10k = int(10000 / last) if last > 0 else 0
-    shares_10k_str = f"約 {shares_10k} 股" if shares_10k > 0 else "股價過高，考慮更小單位"
+    # ② 建倉策略（風險法；取消 NT$10,000 上限）：目標部位 = 單檔上限，分三批
+    from trade_check import DEFAULT_BUDGET, fmt_shares
+    _full = int(DEFAULT_BUDGET // (last * 1.001425)) if last > 0 else 0
+    shares_10k_str = f"每批約 {fmt_shares(max(1, _full // 3))}（目標部位 {fmt_shares(_full)}）" if _full > 0 else "股價過高"
     if rsi <= 55 and stage in (1, 2):
-        accumulate = (f"現在可開始第一批零股：每月 NT$3,000-5,000 分批買入（NT$10,000 可買 {shares_10k_str}）。"
+        accumulate = (f"現在可開始第一批：目標部位分三批建立，{shares_10k_str}。"
                       f"逢回測 Fib 61.8%（NT${fib618}）或 S1（NT${s1}）可加碼 1-2 倍月定投量。"
-                      f"目標：6 個月內建立完整倉位。")
+                      f"第二、三批等站穩 MA20 或回測支撐再加，止損以卡片為準。")
     elif rsi >= 70:
         accumulate = (f"RSI {rsi:.0f} 偏熱，短期追高風險高。建議暫緩首批，等回落至 RSI<60 再啟動。"
                       f"若已持有，維持現有倉位即可，暫停加碼。"
                       f"回測 NT${fib50}（Fib 50%）或 MA20（NT${ma20:.1f}）後再啟動定投。")
     else:
-        accumulate = (f"可小量起步（每月 NT$2,000-3,000 定投）：NT$10,000 可買 {shares_10k_str}。"
+        accumulate = (f"可先建第一批（目標部位的 1/3）：{shares_10k_str}。"
                       f"在 S1（NT${s1}）到 S2（NT${s2}）之間逢低加大買入量，高過 R1（NT${r1}）時"
                       f"暫緩加碼。以季度（每3個月）回顧一次佈局進度。")
 
@@ -2102,9 +2103,59 @@ def _fetch_live_twse(tickers: List[str]) -> Dict[str, Dict]:
                 "limit_down": limit_down,
                 "time":       t_str[:5] if len(t_str) >= 5 else t_str,
                 "live":       True,
+                "src":        "MIS",
             }
     except Exception:
-        pass
+        global _twse_session
+        _twse_session = None          # cookie/session went stale (common on Cloud) → next call rebuilds it
+    return result
+
+
+def _fetch_live_yahoo_tw(tickers: List[str]) -> Dict[str, Dict]:
+    """Yahoo 奇摩股市即時報價（與網站同源、盤中即時，海外主機也連得到）。MIS 失敗時的第二來源。"""
+    result: Dict[str, Dict] = {}
+    if not tickers:
+        return result
+
+    def _raw(x):
+        try:
+            return float(x["raw"]) if isinstance(x, dict) else float(str(x).replace(",", ""))
+        except Exception:
+            return None
+
+    for sfx in (".TW", ".TWO"):
+        want = [t for t in tickers if t not in result]
+        for i in range(0, len(want), 30):
+            batch = want[i:i + 30]
+            syms = ",".join(_strip_suffix(t) + sfx for t in batch)
+            url = ("https://tw.stock.yahoo.com/_td-stock/api/resource/StockServices.stockList;"
+                   f"autoRefresh=1;fields=avgPrice%2Corderbook;symbols={requests.utils.quote(syms)}")
+            try:
+                r = requests.get(url, headers=HEADERS, timeout=5)
+                r.raise_for_status()
+                for x in r.json():
+                    code = str(x.get("systexId") or "")
+                    key = next((t for t in batch if _strip_suffix(t) == code), None)
+                    price, prev = _raw(x.get("price")), _raw(x.get("regularMarketPreviousClose"))
+                    if not key or not price or not prev:
+                        continue
+                    ts = str(x.get("regularMarketTime") or "")
+                    try:
+                        hhmm = (datetime.fromisoformat(ts.replace("Z", "+00:00")) + timedelta(hours=8)).strftime("%H:%M:%S")[:5]
+                    except Exception:
+                        hhmm = "--:--"
+                    vol = _raw(x.get("volumeK"))
+                    result[key] = {
+                        "price": round(price, 2), "prev": prev, "chg": round(price - prev, 2),
+                        "chg_pct": round((price - prev) / prev * 100, 2),
+                        "volume": int(vol) if vol else 0,
+                        "limit_up": _raw(x.get("limitUpPrice")) or _tw_limit_up(prev),
+                        "limit_down": _raw(x.get("limitDownPrice")) or _tw_limit_down(prev),
+                        "time": hhmm, "live": True,
+                        "src": "Yahoo即時",
+                    }
+            except Exception:
+                continue
     return result
 
 
@@ -2166,6 +2217,7 @@ def _fetch_live_yf(tickers: List[str]) -> Dict[str, Dict]:
                 "limit_down": _tw_limit_down(prev_close),
                 "time":       _parse_ts(last_ts),
                 "live":       is_today,
+                "src":        "Yahoo 1分K（延遲）",
             }
         except Exception:
             pass
@@ -2175,13 +2227,21 @@ def _fetch_live_yf(tickers: List[str]) -> Dict[str, Dict]:
 def fetch_live_prices(tickers: List[str]) -> Dict[str, Dict]:
     """
     即時股價主入口：
-      1. 優先用 TWSE MIS API（官方即時，盤中幾秒更新）
-      2. 沒拿到的 ticker 改用 yfinance 1分K補齊（非盤中時段）
+      1. TWSE MIS API（官方即時，盤中幾秒更新；失敗會重建 session 再試一次）
+      2. Yahoo 奇摩股市即時報價（MIS 擋海外主機時仍即時）
+      3. yfinance 1分K（延遲，最後手段）
+    每筆結果帶 "src" 標示來源。
     """
     if not tickers:
         return {}
     result  = _fetch_live_twse(tickers)
     missing = [t for t in tickers if t not in result]
+    if missing:                                   # MIS 擋海外/逾時 → 先用 Yahoo 即時，再退回 1 分 K
+        result.update(_fetch_live_twse(missing))  # session 重建後再試一次
+        missing = [t for t in tickers if t not in result]
+    if missing:
+        result.update(_fetch_live_yahoo_tw(missing))
+        missing = [t for t in tickers if t not in result]
     if missing:
         result.update(_fetch_live_yf(missing))
         # 上櫃股在 Yahoo 是 .TWO；存回原本的 .TW key

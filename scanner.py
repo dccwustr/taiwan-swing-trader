@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import numpy as np
 import warnings
+from risk import MAX_NOTIONAL_PCT
 warnings.filterwarnings("ignore")
 
 # ── Reuse indicators from the existing app ──────────────────────────────────
@@ -89,8 +90,8 @@ def _calc_position_info(last: float, stop: float, target: float, capital: int = 
         return {"shares": 0, "notional": 0, "risk_nwd": 0, "rr": 0, "shares_1k": 0}
 
     shares = int(max_risk_nwd / risk_per_share)
-    # Cap at 30% of capital per position
-    max_notional = int(capital * 0.30)
+    # Per-position cap from risk.py (full capital since 2026-11-10)
+    max_notional = int(capital * MAX_NOTIONAL_PCT)
     shares = min(shares, int(max_notional / last))
     shares = max(shares, 1)
 
@@ -349,7 +350,7 @@ def scan_daytrade_setups(prices: Dict[str, pd.DataFrame],
             reward = target - last
             rr     = round(reward / risk, 2) if risk > 0 else 0
             if rr >= 1.5 and risk > 0:
-                max_pos = int(capital * 0.30)
+                max_pos = int(capital * MAX_NOTIONAL_PCT)
                 shares  = min(int((capital * 0.015) / risk), int(max_pos / last))
                 shares  = max(1000, (shares // 1000) * 1000)
                 daytrades.append({
